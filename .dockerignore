@@ -1,0 +1,28 @@
+# Secrets - these must come from the host's environment variables, never the image
+.env
+.env.*
+!.env.example
+
+# Local Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Frontend deps/build are produced inside the builder stage
+frontend/node_modules/
+frontend/dist/
+
+# Local artefacts
+exotel_stream_debug.json
+*.log
+uploads/
+recordings/
+
+# VCS / editor / docs
+.git/
+.gitignore
+.vscode/
+.idea/
+*.md
+!DEPLOY.md

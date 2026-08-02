@@ -1,0 +1,101 @@
+# Render Blueprint - https://render.com/docs/blueprint-spec
+#
+# One Docker service serving both the API and the built React UI, so a client gets a
+# single URL and there is no cross-origin setup to maintain.
+#
+# Every secret below is marked sync:false: Render prompts for the value on first deploy
+# and stores it encrypted. Nothing sensitive lives in this file or in git.
+services:
+  - type: web
+    name: voice-agent
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # --- Database ---
+      - key: MONGO_URI
+        sync: false
+      - key: MONGO_DB
+        value: voice_clone
+
+      # --- Speech to text ---
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: DEEPGRAM_MODEL
+        value: nova-2
+      - key: DEEPGRAM_LANGUAGE
+        value: hi
+
+      # --- Conversation engine ---
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: CEREBRAS_MODEL
+        value: gpt-oss-120b
+
+      # --- Text to speech ---
+      - key: CARTESIA_API_KEY
+        sync: false
+      - key: CARTESIA_VOICE_ID
+        sync: false
+      - key: CARTESIA_MODEL_ID
+        value: sonic-3
+      - key: CARTESIA_LANGUAGE
+        value: hi
+
+      # --- Telephony: Exotel ---
+      - key: EXOTEL_ACCOUNT_SID
+        sync: false
+      - key: EXOTEL_API_KEY
+        sync: false
+      - key: EXOTEL_API_TOKEN
+        sync: false
+      - key: EXOTEL_SUBDOMAIN
+        value: api.exotel.com
+      - key: EXOTEL_EXOPHONE
+        sync: false
+      - key: EXOTEL_APP_ID
+        sync: false
+
+      # --- Telephony: Twilio ---
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+
+      # --- Telephony: Plivo ---
+      - key: PLIVO_AUTH_ID
+        sync: false
+      - key: PLIVO_AUTH_TOKEN
+        sync: false
+      - key: PLIVO_PHONE_NUMBER
+        sync: false
+
+      # --- App ---
+      # Change this from the dev default before handing the URL to anyone.
+      - key: API_KEY
+        generateValue: true
+      # Webhook/stream base URLs must be this service's own public URL, which Render
+      # supplies from its own host once the service exists.
+      - key: TWILIO_WEBHOOK_BASE_URL
+        fromService:
+          type: web
+          name: voice-agent
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: EXOTEL_WEBHOOK_BASE_URL
+        fromService:
+          type: web
+          name: voice-agent
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: PLIVO_WEBHOOK_BASE_URL
+        fromService:
+          type: web
+          name: voice-agent
+          envVarKey: RENDER_EXTERNAL_URL

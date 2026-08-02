@@ -1,0 +1,33 @@
+# Secrets — NEVER commit. Render (and any host) takes these as environment variables.
+.env
+.env.local
+.env.*.local
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Node / frontend build
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Local runtime artefacts. The debug dumps contain real call data (phone numbers,
+# CallSids), so they must never be published.
+exotel_stream_debug.json
+exotel_status_debug.json
+*.log
+uploads/
+recordings/
+*.xlsx
+*.csv
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
