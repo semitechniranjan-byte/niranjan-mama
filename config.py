@@ -47,6 +47,15 @@ class Settings:
     # conversion step, so it is the default here the same way it is for Exotel.
     PLIVO_STREAM_CONTENT_TYPE: str = os.getenv("PLIVO_STREAM_CONTENT_TYPE", "audio/x-l16;rate=8000")
 
+    VOBIZ_AUTH_ID: str = os.getenv("VOBIZ_AUTH_ID", "")
+    VOBIZ_AUTH_TOKEN: str = os.getenv("VOBIZ_AUTH_TOKEN", "")
+    VOBIZ_PHONE_NUMBER: str = os.getenv("VOBIZ_PHONE_NUMBER", "")
+    VOBIZ_WEBHOOK_BASE_URL: str = os.getenv("VOBIZ_WEBHOOK_BASE_URL", "")
+    VOBIZ_API_BASE: str = os.getenv("VOBIZ_API_BASE", "https://api.vobiz.ai/api/v1")
+    # Vobiz accepts L16 at 8/16/24 kHz or mu-law at 8 kHz. L16 8 kHz matches what Deepgram
+    # is fed elsewhere, so no resampling or codec conversion is needed.
+    VOBIZ_STREAM_CONTENT_TYPE: str = os.getenv("VOBIZ_STREAM_CONTENT_TYPE", "audio/x-l16;rate=8000")
+
     API_KEY: str = os.getenv("API_KEY", "dev-key")
 
 

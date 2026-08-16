@@ -561,6 +561,64 @@ async def hangup_callback(request: Request) -> JSONResponse:
     return JSONResponse({"status": "ok", "session_id": session_id})
 
 
+@app.post("/webhooks/vobiz/answer")
+async def vobiz_answer(request: Request) -> PlainTextResponse:
+    """Vobiz fetches this when the callee answers; the XML opens the audio stream.
+
+    The create-call response only carried a request_uuid, so this is the first place the
+    real CallUUID is available for a later hangup.
+    """
+    try:
+        form_data = dict(await request.form())
+    except Exception:
+        form_data = {}
+    if not form_data:
+        try:
+            form_data = dict(await request.json())
+        except Exception:
+            form_data = {}
+    session_id = request.query_params.get("session_id") or form_data.get("session_id")
+    call_uuid = form_data.get("CallUUID") or form_data.get("call_uuid") or form_data.get("callUUID")
+    if session_id:
+        call = call_registry.get_call(session_id)
+        if call is not None and call_uuid:
+            call.call_sid = call_uuid
+        await handler.db.mark_session_state(
+            session_id, "active", source="vobiz_answer", call_uuid=call_uuid
+        )
+    xml = handler.telephony_vobiz.build_stream_response(session_id or "")
+    return PlainTextResponse(content=xml, media_type="application/xml")
+
+
+@app.post("/webhooks/vobiz/hangup")
+async def vobiz_hangup(request: Request) -> JSONResponse:
+    try:
+        form_data = dict(await request.form())
+    except Exception:
+        form_data = {}
+    if not form_data:
+        try:
+            form_data = dict(await request.json())
+        except Exception:
+            form_data = {}
+    session_id = request.query_params.get("session_id") or form_data.get("session_id")
+    if session_id:
+        call_status = form_data.get("CallStatus") or form_data.get("Status")
+        call_info = {
+            "CallStatus": call_status,
+            "Duration": form_data.get("Duration") or form_data.get("BillDuration"),
+            "EndTime": form_data.get("EndTime"),
+            "HangupCause": form_data.get("HangupCauseName") or form_data.get("HangupCause"),
+            "RecordingUrl": form_data.get("RecordUrl") or form_data.get("RecordingUrl"),
+        }
+        await handler.db.mark_session_state(
+            session_id, "ended", hangup_source="vobiz_callback",
+            call_status=call_status, call_info=call_info,
+        )
+        await handler.finalize_call(session_id, status="completed", reason="vobiz_hangup_callback")
+    return JSONResponse({"status": "ok", "session_id": session_id})
+
+
 @app.post("/webhooks/plivo/answer")
 async def plivo_answer(request: Request) -> PlainTextResponse:
     """Plivo fetches this when the callee picks up; the XML opens the AudioStream.
@@ -880,10 +938,17 @@ async def get_app_settings() -> dict:
             "cartesia": bool(settings.CARTESIA_API_KEY),
             "twilio": bool(settings.TWILIO_ACCOUNT_SID and settings.TWILIO_AUTH_TOKEN),
             "exotel": bool(settings.EXOTEL_API_KEY and settings.EXOTEL_API_TOKEN),
+            "plivo": bool(settings.PLIVO_AUTH_ID and settings.PLIVO_AUTH_TOKEN),
+            "vobiz": bool(settings.VOBIZ_AUTH_ID and settings.VOBIZ_AUTH_TOKEN),
         },
+        # Caller id per network. The Settings screen uses this as the placeholder for the
+        # "Caller ID" field, so a provider missing here shows no hint about which number a
+        # blank field would actually dial from.
         "numbers": {
             "twilio": settings.TWILIO_PHONE_NUMBER,
             "exotel": settings.EXOTEL_EXOPHONE,
+            "plivo": settings.PLIVO_PHONE_NUMBER,
+            "vobiz": settings.VOBIZ_PHONE_NUMBER,
         },
     }
 
@@ -1218,6 +1283,59 @@ async def exotel_stream_websocket(websocket: WebSocket) -> None:
         _write_exotel_debug(session_id, seen_events, frame_count, error=traceback.format_exc())
     finally:
         _write_exotel_debug(session_id, seen_events, frame_count, closed=True)
+        if call is not None:
+            await call.detach_stream()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+
+
+@app.websocket("/vobiz-stream")
+async def vobiz_stream_websocket(websocket: WebSocket) -> None:
+    """Vobiz audio stream: bidirectional audio for the live conversation.
+
+    Two shape differences from the Plivo/Twilio streams, both silent if missed: messages
+    are keyed on "type" rather than "event", and inbound audio arrives as a top-level
+    "payload" rather than nested under "media".
+    """
+    await websocket.accept()
+    session_id = websocket.query_params.get("session_id") or ""
+    call: Any = call_registry.get_call(session_id)
+    if call is None:
+        call = call_registry.only_active_call() or handler
+        logger.warning(
+            "Vobiz stream for session %r not in registry (%s active); using fallback",
+            session_id, call_registry.active_count(),
+        )
+    try:
+        while True:
+            message = await websocket.receive_json()
+            event = message.get("type") or message.get("event")
+            if event == "start":
+                call_uuid = message.get("callUUID") or message.get("call_uuid") or ""
+                logger.info(
+                    "Vobiz stream started for session %s (callUUID=%s, format=%s)",
+                    session_id, call_uuid, message.get("mediaFormat"),
+                )
+                # The stream is the most reliable source of the real call id, which the
+                # hangup API needs; the create-call response only had a request_uuid.
+                if call_uuid:
+                    call.call_sid = call_uuid
+                if session_id:
+                    await handler.db.update_session(session_id, websocket_connected=True)
+                await call.attach_stream(websocket, call_uuid or session_id, provider="vobiz")
+            elif event == "media":
+                payload_b64 = message.get("payload") or (message.get("media") or {}).get("payload")
+                if payload_b64:
+                    await call.handle_incoming_audio(base64.b64decode(payload_b64))
+            elif event in ("stop", "disconnect"):
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        logger.exception("Error in Vobiz media stream for session %s", session_id)
+    finally:
         if call is not None:
             await call.detach_stream()
         try:

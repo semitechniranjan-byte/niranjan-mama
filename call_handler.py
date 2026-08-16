@@ -14,6 +14,7 @@ try:
     from .telephony_service import TwilioTelephonyService
     from .exotel_service import ExotelTelephonyService
     from .plivo_service import PlivoVoiceService
+    from .vobiz_service import VobizVoiceService
     from .config import settings
     from .helper_utils import format_prompt_with_placeholders
     from .audio_utils import mulaw_to_linear16, rms
@@ -26,6 +27,7 @@ except ImportError:  # pragma: no cover
     from telephony_service import TwilioTelephonyService
     from exotel_service import ExotelTelephonyService
     from plivo_service import PlivoVoiceService
+    from vobiz_service import VobizVoiceService
     from config import settings
     from helper_utils import format_prompt_with_placeholders
     from audio_utils import mulaw_to_linear16, rms
@@ -85,6 +87,7 @@ class CallHandler:
         self.telephony = TwilioTelephonyService()
         self.telephony_exotel = ExotelTelephonyService()
         self.telephony_plivo = PlivoVoiceService()
+        self.telephony_vobiz = VobizVoiceService()
         self.initialized = False
         self.session_id: Optional[str] = None
         self.greeting_text = "Hello, I am your voice assistant. How can I help you today?"
@@ -255,7 +258,7 @@ class CallHandler:
 
     def _stream_audio_encoding(self) -> tuple[str, int]:
         """(Cartesia output encoding, sample rate) for the currently attached stream provider."""
-        if self.stream_provider in ("exotel", "plivo"):
+        if self.stream_provider in ("exotel", "plivo", "vobiz"):
             return "pcm_s16le", 8000
         return "pcm_mulaw", 8000
 
@@ -295,7 +298,20 @@ class CallHandler:
             return
         payload = base64.b64encode(frame).decode("ascii")
         try:
-            if self.stream_provider == "plivo":
+            if self.stream_provider == "vobiz":
+                # Vobiz keys its stream messages on "type" rather than "event", and takes
+                # no stream id on outbound audio.
+                await self.ws.send_json(
+                    {
+                        "type": "playAudio",
+                        "media": {
+                            "contentType": "audio/x-l16",
+                            "sampleRate": 8000,
+                            "payload": payload,
+                        },
+                    }
+                )
+            elif self.stream_provider == "plivo":
                 # Plivo does not accept a "media" event for outbound audio the way Twilio
                 # and Exotel do — it expects playAudio with the codec spelled out.
                 await self.ws.send_json(
@@ -336,7 +352,10 @@ class CallHandler:
         if not self.ws or not self.stream_sid:
             return
         try:
-            if self.stream_provider == "plivo":
+            if self.stream_provider == "vobiz":
+                # Barge-in: drop buffered-but-unplayed audio. Vobiz takes no stream id.
+                await self.ws.send_json({"type": "clearAudio"})
+            elif self.stream_provider == "plivo":
                 # Plivo's barge-in equivalent: drops whatever it has buffered but not played.
                 await self.ws.send_json({"event": "clearAudio", "streamId": self.stream_sid})
             elif self.stream_provider == "exotel":
@@ -359,7 +378,7 @@ class CallHandler:
                 )
             return
         try:
-            linear16_chunk = raw_chunk if self.stream_provider in ("exotel", "plivo") else mulaw_to_linear16(raw_chunk)
+            linear16_chunk = raw_chunk if self.stream_provider in ("exotel", "plivo", "vobiz") else mulaw_to_linear16(raw_chunk)
             level = rms(linear16_chunk)
         except Exception as exc:
             logger.warning("AUDIO-IN [%s] decode failed: %s", self.session_id, exc)
@@ -428,7 +447,7 @@ class CallHandler:
             )
             return
         try:
-            stt_encoding = "linear16" if self.stream_provider in ("exotel", "plivo") else "mulaw"
+            stt_encoding = "linear16" if self.stream_provider in ("exotel", "plivo", "vobiz") else "mulaw"
             logger.warning(
                 "STT [%s] sending %s bytes (%s)", self.session_id, len(audio_bytes), stt_encoding
             )
@@ -517,6 +536,14 @@ class CallHandler:
             and (settings.PLIVO_WEBHOOK_BASE_URL or settings.TWILIO_WEBHOOK_BASE_URL)
         )
 
+    def _should_use_offline_mode_vobiz(self) -> bool:
+        return not (
+            settings.VOBIZ_AUTH_ID
+            and settings.VOBIZ_AUTH_TOKEN
+            and settings.VOBIZ_PHONE_NUMBER
+            and (settings.VOBIZ_WEBHOOK_BASE_URL or settings.TWILIO_WEBHOOK_BASE_URL)
+        )
+
     async def handle_outbound_call(
         self,
         to_number: str,
@@ -564,6 +591,29 @@ class CallHandler:
             # Reports "telephony" (not an exotel-specific mode) so callers such as
             # campaign_service treat it like any other live streamed call and wait for
             # the conversation to finish instead of marking it rejected.
+            return {"session_id": session["session_id"], "telephony_response": result, "mode": "telephony"}
+
+        if provider == "vobiz":
+            if self._should_use_offline_mode_vobiz():
+                return {
+                    "session_id": session["session_id"],
+                    "mode": "offline",
+                    "message": "No Vobiz credentials configured; the call was created locally for queueing and session tracking.",
+                }
+            try:
+                result = await self.telephony_vobiz.make_call(
+                    from_number or settings.VOBIZ_PHONE_NUMBER, to_number, session["session_id"]
+                )
+                if result.get("status") != "success":
+                    return {"session_id": session["session_id"], "telephony_response": result, "mode": "telephony"}
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            # request_uuid for now; the answer webhook and the stream's start event both
+            # carry the real call_uuid, which is what hangup_call needs.
+            self.call_sid = result.get("call_uuid")
+            self.call_provider = "vobiz"
+            # start_greeting=False: wait for the audio stream, same as the other providers.
+            await self.initialize(self.session_id, greeting_text or self.greeting_text, start_greeting=False)
             return {"session_id": session["session_id"], "telephony_response": result, "mode": "telephony"}
 
         if provider == "plivo":
@@ -665,6 +715,11 @@ class CallHandler:
                     await self.ws.close()
                 except Exception as exc:
                     logger.warning("Failed to close Exotel stream for call %s: %s", self.call_sid, exc)
+        elif self.call_provider == "vobiz" and self.call_sid:
+            try:
+                await self.telephony_vobiz.hangup_call(self.call_sid)
+            except Exception as exc:
+                logger.warning("Failed to hang up Vobiz call %s: %s", self.call_sid, exc)
         elif self.call_provider == "plivo" and self.call_sid:
             try:
                 await self.telephony_plivo.hangup_call(self.call_sid)
@@ -687,6 +742,11 @@ class CallHandler:
                     await self.ws.close()
                 except Exception as exc:
                     logger.warning("Failed to close Exotel stream for call %s: %s", self.call_sid, exc)
+        elif self.call_provider == "vobiz" and self.call_sid:
+            try:
+                await self.telephony_vobiz.hangup_call(self.call_sid)
+            except Exception as exc:
+                logger.warning("Failed to hang up Vobiz call %s: %s", self.call_sid, exc)
         elif self.call_provider == "plivo" and self.call_sid:
             try:
                 await self.telephony_plivo.hangup_call(self.call_sid)

@@ -78,6 +78,14 @@ services:
       - key: PLIVO_PHONE_NUMBER
         sync: false
 
+      # --- Telephony: Vobiz ---
+      - key: VOBIZ_AUTH_ID
+        sync: false
+      - key: VOBIZ_AUTH_TOKEN
+        sync: false
+      - key: VOBIZ_PHONE_NUMBER
+        sync: false
+
       # --- App ---
       # Change this from the dev default before handing the URL to anyone.
       - key: API_KEY
@@ -95,6 +103,11 @@ services:
           name: voice-agent
           envVarKey: RENDER_EXTERNAL_URL
       - key: PLIVO_WEBHOOK_BASE_URL
+        fromService:
+          type: web
+          name: voice-agent
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: VOBIZ_WEBHOOK_BASE_URL
         fromService:
           type: web
           name: voice-agent

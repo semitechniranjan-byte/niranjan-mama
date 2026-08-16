@@ -142,6 +142,14 @@ PROVIDER_REGISTRY: Dict[str, List[Dict[str, Any]]] = {
             "default_model": "",
         },
         {
+            "key": "vobiz",
+            "label": "Vobiz (India / Global)",
+            "implemented": True,
+            "requires": ["VOBIZ_AUTH_ID", "VOBIZ_AUTH_TOKEN", "VOBIZ_PHONE_NUMBER"],
+            "models": [],
+            "default_model": "",
+        },
+        {
             "key": "plivo",
             "label": "Plivo (International)",
             "implemented": True,
