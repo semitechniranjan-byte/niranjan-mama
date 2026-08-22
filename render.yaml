@@ -92,6 +92,16 @@ services:
 
       # --- App ---
       # Change this from the dev default before handing the URL to anyone.
+      # Sign-in accounts. Change these on the host to rotate credentials without a
+      # code change; the code's defaults are only a fallback for local development.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: USER_EMAIL
+        sync: false
+      - key: USER_PASSWORD
+        sync: false
       - key: API_KEY
         generateValue: true
       # Webhook/stream base URLs must be this service's own public URL, which Render

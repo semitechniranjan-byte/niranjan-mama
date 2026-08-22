@@ -41,7 +41,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
-  const { apiUrl, logout } = useAuth();
+  const { apiUrl, logout, can, role, email } = useAuth();
   const navigate = useNavigate();
   const { data: health } = useQuery({
     queryKey: ["health"],
@@ -56,6 +56,13 @@ export function Layout({ children }: { children: ReactNode }) {
   const partial = !online && checks.some(Boolean);
   const statusLabel = online ? "Operational" : partial ? "Degraded" : "Offline";
   const statusDot = online ? "bg-emerald-500" : partial ? "bg-amber-500" : "bg-rose-500";
+
+  // The backend returns the pages this role may open; the menu is derived from that list
+  // so a hidden item can never point at a route the API would reject anyway.
+  const visibleSections = NAV_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter((item) => can(item.to)),
+  })).filter((section) => section.items.length > 0);
 
   const handleLogout = () => {
     logout();
@@ -72,12 +79,12 @@ export function Layout({ children }: { children: ReactNode }) {
           </span>
           <div className="leading-tight">
             <div className="text-sm font-semibold text-white">Voice Agent</div>
-            <div className="text-[11px] text-slate-400">Admin console</div>
+            <div className="text-[11px] text-slate-400">{role === "admin" ? "Admin" : "Operator"}</div>
           </div>
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-3 pb-4">
-          {NAV_SECTIONS.map((section) => (
+          {visibleSections.map((section) => (
             <div key={section.heading}>
               <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                 {section.heading}
@@ -106,6 +113,9 @@ export function Layout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="border-t border-slate-800 px-4 py-3">
+          <div className="mb-2 truncate text-[11px] text-slate-300" title={email}>
+            {email}
+          </div>
           <div className="flex items-center gap-2 text-[11px] text-slate-400">
             <span className={`h-1.5 w-1.5 rounded-full ${statusDot}`} />
             <span className="truncate">{statusLabel}</span>
@@ -114,7 +124,7 @@ export function Layout({ children }: { children: ReactNode }) {
             onClick={handleLogout}
             className="mt-2 w-full rounded-md border border-slate-700 px-2 py-1.5 text-xs text-slate-300 transition hover:bg-slate-800 hover:text-white"
           >
-            Disconnect
+            Sign out
           </button>
         </div>
       </aside>

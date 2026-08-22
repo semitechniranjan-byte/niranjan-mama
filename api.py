@@ -1,8 +1,10 @@
 import asyncio
 import base64
+import hashlib
 import json
 import logging
 import os
+import secrets
 import traceback
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,9 +51,80 @@ app.include_router(analyze_sessions_router)
 handler = CallHandler()
 
 
-def require_api_key(x_api_key: Optional[str] = Header(None)) -> None:
-    if x_api_key != settings.API_KEY:
+# ---------------------------------------------------------------------------
+# Accounts and roles
+#
+# Two fixed sign-ins: an admin who sees everything, and an operator who only needs the
+# day-to-day screens. Credentials come from the environment so they can be rotated on the
+# host without a code change; the defaults exist only so a fresh checkout runs.
+#
+# Each role gets a DIFFERENT token. Without that the backend could not tell the two apart
+# and hiding menu items would be decoration — anyone could call an admin endpoint directly.
+# ---------------------------------------------------------------------------
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "qsilonadmin@gmail.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "@qsilonadmin@2026")
+USER_EMAIL = os.getenv("USER_EMAIL", "qsilonuser@gmail.com")
+USER_PASSWORD = os.getenv("USER_PASSWORD", "@qsilon@2026")
+
+# The admin token is the existing API key, so nothing that already uses it breaks. The
+# operator token is derived from it, which means rotating API_KEY rotates both at once.
+ADMIN_TOKEN = settings.API_KEY
+USER_TOKEN = hashlib.sha256(f"{settings.API_KEY}:operator".encode()).hexdigest()[:32]
+
+# Which screens each role may open. The frontend renders its menu from this, so the two
+# can never drift apart.
+ROLE_PAGES = {
+    "admin": [
+        "/", "/campaigns", "/sessions", "/calls", "/agents",
+        "/analytics", "/templates", "/datasheets", "/settings",
+    ],
+    "user": ["/", "/campaigns", "/calls", "/datasheets"],
+}
+
+
+def _role_for_token(token: Optional[str]) -> Optional[str]:
+    if token and secrets.compare_digest(token, ADMIN_TOKEN):
+        return "admin"
+    if token and secrets.compare_digest(token, USER_TOKEN):
+        return "user"
+    return None
+
+
+def require_api_key(x_api_key: Optional[str] = Header(None)) -> str:
+    """Any signed-in role. Returns the role so callers can vary behaviour if needed."""
+    role = _role_for_token(x_api_key)
+    if role is None:
         raise HTTPException(status_code=401, detail="invalid or missing API key")
+    return role
+
+
+def require_admin(x_api_key: Optional[str] = Header(None)) -> str:
+    """Admin only - configuration, prompts, agents and logs."""
+    role = _role_for_token(x_api_key)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="admin access required")
+    return role
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+@app.post("/auth/login")
+async def auth_login(payload: LoginRequest) -> dict:
+    email = (payload.email or "").strip().lower()
+    password = payload.password or ""
+
+    if email == ADMIN_EMAIL.lower() and secrets.compare_digest(password, ADMIN_PASSWORD):
+        role, token = "admin", ADMIN_TOKEN
+    elif email == USER_EMAIL.lower() and secrets.compare_digest(password, USER_PASSWORD):
+        role, token = "user", USER_TOKEN
+    else:
+        # Same message either way, so the response cannot be used to discover valid emails.
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    return {"token": token, "role": role, "email": email, "pages": ROLE_PAGES[role]}
 
 
 async def _initialize_analysis_support() -> None:
@@ -512,7 +585,7 @@ async def transcribe_audio(payload: TranscribeRequest) -> dict:
     return await handler.transcribe_audio(payload.audio_base64)
 
 
-@app.get("/logs")
+@app.get("/logs", dependencies=[Depends(require_admin)])
 async def get_logs() -> PlainTextResponse:
     log_path = os.path.join(os.getcwd(), "fastapi_logs.log")
     if not os.path.exists(log_path):
@@ -809,7 +882,7 @@ async def update_multi_voice_config(payload: MultiVoiceConfigUpdate) -> dict:
     return {"status": "ok", "enabled": payload.enabled, "dynamic_fields": handler.dynamic_fields}
 
 
-@app.post("/templates", dependencies=[Depends(require_api_key)])
+@app.post("/templates", dependencies=[Depends(require_admin)])
 async def create_template(payload: TemplateRequest) -> dict:
     template_id = await handler.db.create_template(payload.model_dump(exclude_none=True))
     return {"template_id": template_id}
@@ -828,7 +901,7 @@ async def get_template(template_id: str) -> dict:
     return {"template": template}
 
 
-@app.put("/templates/{template_id}", dependencies=[Depends(require_api_key)])
+@app.put("/templates/{template_id}", dependencies=[Depends(require_admin)])
 async def update_template(template_id: str, payload: TemplateUpdateRequest) -> dict:
     updated = await handler.db.update_template(template_id, payload.model_dump(exclude_none=True))
     if not updated:
@@ -837,7 +910,7 @@ async def update_template(template_id: str, payload: TemplateUpdateRequest) -> d
     return {"template": template}
 
 
-@app.delete("/templates/{template_id}", dependencies=[Depends(require_api_key)])
+@app.delete("/templates/{template_id}", dependencies=[Depends(require_admin)])
 async def delete_template(template_id: str) -> dict:
     deleted = await handler.db.delete_template(template_id)
     if not deleted:
@@ -845,7 +918,7 @@ async def delete_template(template_id: str) -> dict:
     return {"status": "deleted", "template_id": template_id}
 
 
-@app.post("/datasheet-templates", dependencies=[Depends(require_api_key)])
+@app.post("/datasheet-templates", dependencies=[Depends(require_admin)])
 async def create_datasheet_template(payload: DatasheetTemplateRequest) -> dict:
     datasheet_template_id = await handler.db.create_datasheet_template(payload.model_dump())
     return {"datasheet_template_id": datasheet_template_id}
@@ -864,7 +937,7 @@ async def get_datasheet_template(datasheet_template_id: str) -> dict:
     return {"datasheet_template": datasheet_template}
 
 
-@app.put("/datasheet-templates/{datasheet_template_id}", dependencies=[Depends(require_api_key)])
+@app.put("/datasheet-templates/{datasheet_template_id}", dependencies=[Depends(require_admin)])
 async def update_datasheet_template(datasheet_template_id: str, payload: DatasheetTemplateUpdateRequest) -> dict:
     updated = await handler.db.update_datasheet_template(datasheet_template_id, payload.model_dump(exclude_none=True))
     if not updated:
@@ -873,7 +946,7 @@ async def update_datasheet_template(datasheet_template_id: str, payload: Datashe
     return {"datasheet_template": datasheet_template}
 
 
-@app.delete("/datasheet-templates/{datasheet_template_id}", dependencies=[Depends(require_api_key)])
+@app.delete("/datasheet-templates/{datasheet_template_id}", dependencies=[Depends(require_admin)])
 async def delete_datasheet_template(datasheet_template_id: str) -> dict:
     deleted = await handler.db.delete_datasheet_template(datasheet_template_id)
     if not deleted:
@@ -886,7 +959,7 @@ async def get_dispositions() -> dict:
     return {"dispositions": await handler.db.get_dispositions()}
 
 
-@app.put("/dispositions", dependencies=[Depends(require_api_key)])
+@app.put("/dispositions", dependencies=[Depends(require_admin)])
 async def set_dispositions(payload: DispositionsUpdateRequest) -> dict:
     data = [item.model_dump() for item in payload.data]
     await handler.db.set_dispositions(data)
@@ -898,7 +971,7 @@ async def get_mapping_keys() -> dict:
     return {"categories": await handler.db.get_mapping_keys()}
 
 
-@app.put("/mapping-keys", dependencies=[Depends(require_api_key)])
+@app.put("/mapping-keys", dependencies=[Depends(require_admin)])
 async def set_mapping_keys(payload: MappingKeysUpdateRequest) -> dict:
     await handler.db.set_mapping_keys(payload.categories)
     return {"categories": payload.categories}
@@ -953,7 +1026,7 @@ async def get_app_settings() -> dict:
     }
 
 
-@app.put("/settings", dependencies=[Depends(require_api_key)])
+@app.put("/settings", dependencies=[Depends(require_admin)])
 async def update_app_settings(payload: AppSettingsRequest) -> dict:
     data = payload.model_dump(exclude_none=True)
     await handler.db.set_app_settings(data)
@@ -969,13 +1042,13 @@ async def list_agents() -> dict:
     return {"agents": agents, "total_active_calls": call_registry.active_count()}
 
 
-@app.post("/agents", dependencies=[Depends(require_api_key)])
+@app.post("/agents", dependencies=[Depends(require_admin)])
 async def create_agent(payload: AgentRequest) -> dict:
     agent_id = await handler.db.create_agent(payload.model_dump())
     return {"agent_id": agent_id}
 
 
-@app.put("/agents/{agent_id}", dependencies=[Depends(require_api_key)])
+@app.put("/agents/{agent_id}", dependencies=[Depends(require_admin)])
 async def update_agent(agent_id: str, payload: AgentUpdateRequest) -> dict:
     updated = await handler.db.update_agent(agent_id, payload.model_dump(exclude_none=True))
     if not updated:
@@ -983,7 +1056,7 @@ async def update_agent(agent_id: str, payload: AgentUpdateRequest) -> dict:
     return {"agent": await handler.db.get_agent(agent_id)}
 
 
-@app.delete("/agents/{agent_id}", dependencies=[Depends(require_api_key)])
+@app.delete("/agents/{agent_id}", dependencies=[Depends(require_admin)])
 async def delete_agent(agent_id: str) -> dict:
     deleted = await handler.db.delete_agent(agent_id)
     if not deleted:
