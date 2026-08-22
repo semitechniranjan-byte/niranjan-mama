@@ -1609,12 +1609,29 @@ if os.path.isdir(FRONTEND_DIST):
 
     @app.middleware("http")
     async def spa_navigation_middleware(request: Request, call_next):
-        accept = request.headers.get("accept", "")
-        if (
-            request.method == "GET"
-            and "text/html" in accept
-            and _is_spa_route(request.url.path)
-        ):
+        """Serve the SPA shell for page navigations only.
+
+        The Accept header alone is not a safe signal: browsers send an Accept that
+        includes text/html on XHR too, so every API route sharing a name with a page
+        (/templates, /campaigns, /agents, /datasheets, ...) returned index.html to the
+        app's own fetch calls. The UI then read `.templates` off an HTML string, got
+        undefined, and rendered an empty page while /health - not a page route - kept
+        working, which made it look like a data problem.
+
+        Sec-Fetch-Dest is the reliable signal: browsers set it to "document" only for a
+        real navigation, and to "empty" for fetch/XHR. It is sent by every current
+        browser over HTTPS; when it is absent (curl, older clients) fall back to Accept.
+        """
+        if request.method != "GET" or not _is_spa_route(request.url.path):
+            return await call_next(request)
+
+        dest = request.headers.get("sec-fetch-dest")
+        if dest is not None:
+            is_navigation = dest == "document"
+        else:
+            is_navigation = "text/html" in request.headers.get("accept", "")
+
+        if is_navigation:
             return FileResponse(_INDEX_HTML)
         return await call_next(request)
 
