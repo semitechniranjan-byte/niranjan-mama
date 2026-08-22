@@ -8,10 +8,11 @@ import {
   updateTemplate,
 } from "../api/endpoints";
 import type { LanguageConfig, Template, UseCase } from "../api/types";
+import { getApiUrl } from "../api/client";
 
 function useSingleTemplate() {
   const queryClient = useQueryClient();
-  const { data: templates, isLoading } = useQuery({ queryKey: ["templates"], queryFn: listTemplates });
+  const { data: templates, isLoading, error } = useQuery({ queryKey: ["templates"], queryFn: listTemplates });
 
   const ensureMutation = useMutation({
     mutationFn: () => createTemplate({ name: "app-template", prompts: { default: "" } }),
@@ -26,6 +27,7 @@ function useSingleTemplate() {
   }, [templates]);
 
   const template = templates?.[0] ?? null;
+  const loadError = error as Error | null;
 
   const saveMutation = useMutation({
     mutationFn: (payload: Partial<Template>) => {
@@ -39,6 +41,7 @@ function useSingleTemplate() {
     template,
     isLoading: isLoading || (templates?.length === 0 && ensureMutation.isPending),
     saveMutation,
+    loadError,
   };
 }
 
@@ -395,7 +398,7 @@ function LanguageRoutingCard({
 }
 
 export function Templates() {
-  const { template, isLoading, saveMutation } = useSingleTemplate();
+  const { template, isLoading, saveMutation, loadError } = useSingleTemplate();
   const { data: supported } = useQuery({ queryKey: ["languages"], queryFn: listSupportedLanguages });
 
   const [useCaseKey, setUseCaseKey] = useState<string>("");
@@ -494,6 +497,26 @@ export function Templates() {
       </div>
 
       {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
+
+      {/* Without this the page rendered an empty shell whenever the request failed,
+          which looks identical to "no data" and hides the real cause. */}
+      {!isLoading && loadError && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-6 shadow-sm">
+          <p className="text-sm font-semibold text-red-800">Could not load templates</p>
+          <p className="mt-1 text-sm text-red-700">{loadError.message}</p>
+          <p className="mt-2 text-xs text-red-600">
+            API: {getApiUrl()} - check that this is the address you expect, then reload.
+          </p>
+        </div>
+      )}
+
+      {!isLoading && !loadError && !template && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 shadow-sm">
+          <p className="text-sm text-amber-800">
+            The server returned no template. API: {getApiUrl()}
+          </p>
+        </div>
+      )}
 
       {template && useCaseKeys.length === 0 && (
         <div className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
