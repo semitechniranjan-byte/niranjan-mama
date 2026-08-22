@@ -1579,6 +1579,13 @@ async def debug_exotel_stream() -> dict:
 # Registered last on purpose: FastAPI matches routes in declaration order, so every API
 # route above still wins, and only unmatched paths fall through to the SPA.
 # ---------------------------------------------------------------------------
+# The shell is tiny and must never be cached under an API path: a stale copy served to
+# an XHR is indistinguishable from an empty API response.
+_SPA_SHELL_HEADERS = {
+    "Cache-Control": "no-store, must-revalidate",
+    "Vary": "Sec-Fetch-Dest, Accept, Accept-Encoding",
+}
+
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend", "dist")
 _INDEX_HTML = os.path.join(FRONTEND_DIST, "index.html")
 
@@ -1632,8 +1639,15 @@ if os.path.isdir(FRONTEND_DIST):
             is_navigation = "text/html" in request.headers.get("accept", "")
 
         if is_navigation:
-            return FileResponse(_INDEX_HTML)
-        return await call_next(request)
+            return FileResponse(_INDEX_HTML, headers=_SPA_SHELL_HEADERS)
+
+        response = await call_next(request)
+        # Same URL, two different bodies depending on the request. Without Vary a cache
+        # stores whichever came first and replays it for the other kind: navigate to
+        # /templates (HTML gets cached), then the app's XHR is served that HTML and reads
+        # undefined off it. That is the intermittent "works after a refresh" failure.
+        response.headers["Vary"] = "Sec-Fetch-Dest, Accept, Accept-Encoding"
+        return response
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(full_path: str) -> Any:
@@ -1648,7 +1662,7 @@ if os.path.isdir(FRONTEND_DIST):
             return FileResponse(candidate)
         if os.path.splitext(full_path)[1]:
             raise HTTPException(status_code=404, detail="not found")
-        return FileResponse(_INDEX_HTML)
+        return FileResponse(_INDEX_HTML, headers=_SPA_SHELL_HEADERS)
 
 else:  # pragma: no cover - local dev runs the Vite server separately
     logger.info("No built frontend at %s; serving API only.", FRONTEND_DIST)
