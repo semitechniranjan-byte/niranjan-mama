@@ -1,7 +1,9 @@
 # Secrets — NEVER commit. Render (and any host) takes these as environment variables.
+# The wildcard matters: .env.render holds every production credential in one file for
+# pasting into the host, and would otherwise be committed.
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
 
 # Python
 .venv/
