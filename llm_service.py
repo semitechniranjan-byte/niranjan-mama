@@ -27,6 +27,14 @@ LLM_PROVIDERS = {
         "api_key_attr": "GROQ_API_KEY",
         "default_model_attr": "GROQ_MODEL",
     },
+    # Google's OpenAI-compatible endpoint, so it needs no separate client. Its
+    # flash-lite models answered 5/5 with the full collection prompt where Groq's
+    # reasoning models returned empty bodies, and the free tier covers testing.
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "api_key_attr": "GEMINI_API_KEY",
+        "default_model_attr": "GEMINI_MODEL",
+    },
     "cerebras": {
         "base_url": "https://api.cerebras.ai/v1",
         "api_key_attr": "CEREBRAS_API_KEY",

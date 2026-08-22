@@ -81,6 +81,19 @@ PROVIDER_REGISTRY: Dict[str, List[Dict[str, Any]]] = {
             "default_model": "claude-sonnet-4-5",
         },
         {
+            "key": "gemini",
+            "label": "Google Gemini",
+            "implemented": True,
+            "requires": ["GEMINI_API_KEY"],
+            "models": [
+                "gemini-3.5-flash-lite",
+                "gemini-3.1-flash-lite",
+                "gemini-3.5-flash",
+                "gemini-3.6-flash",
+            ],
+            "default_model": "gemini-3.5-flash-lite",
+        },
+        {
             "key": "cerebras",
             "label": "Cerebras",
             "implemented": True,
