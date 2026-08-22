@@ -75,9 +75,13 @@ class VobizVoiceService:
             # Session ids start with "+" (the phone number); unencoded it decodes back as a
             # space and the callback never matches its session.
             sid_q = quote(session_id, safe="")
+            # A SIP endpoint ("sip:agent@sip.vobiz.ai") is a valid destination alongside a
+            # PSTN number, and must be passed through untouched — only phone numbers get
+            # their leading "+" stripped.
+            destination = to_number if to_number.lower().startswith("sip:") else to_number.lstrip("+")
             payload = {
                 "from": caller_id.lstrip("+"),
-                "to": to_number.lstrip("+"),
+                "to": destination,
                 "answer_url": f"{self.webhook_url}/webhooks/vobiz/answer?session_id={sid_q}",
                 "answer_method": "POST",
                 "hangup_url": f"{self.webhook_url}/webhooks/vobiz/hangup?session_id={sid_q}",
