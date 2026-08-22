@@ -2,6 +2,7 @@ import asyncio
 import base64
 import logging
 import re
+import time
 from typing import Any, Dict, Optional
 from fastapi import HTTPException
 
@@ -36,7 +37,8 @@ logger = logging.getLogger(__name__)
 
 # Twilio Media Streams send 8kHz mu-law audio in ~20ms frames (160 bytes each).
 VAD_SILENCE_RMS_THRESHOLD = 400
-VAD_SILENCE_FRAMES_TO_END = 25  # ~500ms of silence ends an utterance
+VAD_SILENCE_FRAMES_TO_END = 15  # ~300ms of silence ends an utterance. 25 (500ms) was
+# half a second of dead air on every single turn before the bot even started thinking.
 VAD_MIN_SPEECH_FRAMES = 3
 VAD_MIN_UTTERANCE_BYTES = 800  # ignore blips shorter than ~100ms
 # Sustained speech required to talk over the bot. 3 frames (60ms) fired on line noise and
@@ -458,7 +460,16 @@ class CallHandler:
             logger.warning(
                 "STT [%s] sending %s bytes (%s)", self.session_id, len(audio_bytes), stt_encoding
             )
-            transcript = await self.stt.transcribe_audio_bytes_raw(audio_bytes, encoding=stt_encoding, sample_rate=8000)
+            t_stt = time.monotonic()
+            transcript = await self.stt.transcribe_audio_bytes_raw(
+                audio_bytes, encoding=stt_encoding, sample_rate=self.stream_sample_rate
+            )
+            logger.warning(
+                "STT [%s] took %sms for %.1fs of audio",
+                self.session_id,
+                int((time.monotonic() - t_stt) * 1000),
+                len(audio_bytes) / 2 / max(1, self.stream_sample_rate),
+            )
         except Exception as exc:
             logger.warning("STT [%s] FAILED: %s", self.session_id, exc)
             return
@@ -848,14 +859,30 @@ class CallHandler:
                 return
             if self.interrupted_mid_speech and self._last_spoken_text:
                 user_input = f"[Previous response was interrupted] {user_input}"
-            await self.db.mark_session_state(self.session_id, "active")
-            await self.db.add_conversation_message(self.session_id, "user", user_input)
+            # Fire-and-forget: the caller should not wait on MongoDB before hearing a
+            # reply. Ordering still holds because each write is independent.
+            asyncio.create_task(self.db.mark_session_state(self.session_id, "active"))
+            asyncio.create_task(
+                self.db.add_conversation_message(self.session_id, "user", user_input)
+            )
             logger.warning("LLM [%s] user=%r", self.session_id, user_input[:120])
+
+            t_llm = time.monotonic()
             response_text = await self.llm.generate_response(user_input)
-            logger.warning("LLM [%s] reply=%r", self.session_id, (response_text or "")[:120])
-            await self.db.add_conversation_message(self.session_id, "assistant", response_text)
+            llm_ms = int((time.monotonic() - t_llm) * 1000)
+
+            asyncio.create_task(
+                self.db.add_conversation_message(self.session_id, "assistant", response_text)
+            )
             self._last_spoken_text = response_text
+
+            t_tts = time.monotonic()
             await self._speak(response_text)
+            tts_ms = int((time.monotonic() - t_tts) * 1000)
+            logger.warning(
+                "TURN [%s] llm=%sms tts=%sms total=%sms reply=%r",
+                self.session_id, llm_ms, tts_ms, llm_ms + tts_ms, (response_text or "")[:80],
+            )
             self._start_silence_timer()
         finally:
             self.is_processing = False
