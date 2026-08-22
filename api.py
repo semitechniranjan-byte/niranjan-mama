@@ -131,8 +131,40 @@ async def _initialize_analysis_support() -> None:
     init_analyze_sessions(handler.db, handler.db.get_conversation_history_route)
 
 
+def _log_configuration_report() -> None:
+    """Print, once at boot, exactly which credentials arrived.
+
+    Without this a missing variable only shows up later as a confusing runtime error
+    ("Connection refused" against localhost), which hides the real cause: the host never
+    received the configuration at all.
+    """
+    checks = {
+        "MONGO_URI": bool(settings.MONGO_URI) and "localhost" not in settings.MONGO_URI,
+        "DEEPGRAM_API_KEY": bool(settings.DEEPGRAM_API_KEY),
+        "GEMINI_API_KEY": bool(settings.GEMINI_API_KEY),
+        "CARTESIA_API_KEY": bool(settings.CARTESIA_API_KEY),
+        "CARTESIA_VOICE_ID": bool(settings.CARTESIA_VOICE_ID),
+        "VOBIZ_AUTH_ID": bool(settings.VOBIZ_AUTH_ID),
+        "VOBIZ_AUTH_TOKEN": bool(settings.VOBIZ_AUTH_TOKEN),
+        "VOBIZ_PHONE_NUMBER": bool(settings.VOBIZ_PHONE_NUMBER),
+    }
+    missing = [name for name, ok in checks.items() if not ok]
+    present = [name for name, ok in checks.items() if ok]
+    logger.warning("CONFIG: %s/%s set -> %s", len(present), len(checks), ", ".join(present) or "none")
+    if missing:
+        logger.warning(
+            "CONFIG: MISSING -> %s | set these as environment variables on the host "
+            "(Render: Environment tab, not Secret Files), or upload the .env to "
+            "/etc/secrets/.env",
+            ", ".join(missing),
+        )
+    else:
+        logger.warning("CONFIG: all required credentials present")
+
+
 @app.on_event("startup")
 async def startup() -> None:
+    _log_configuration_report()
     await handler.initialize()
     await _initialize_analysis_support()
 

@@ -2,7 +2,17 @@ import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
 
+# Local development reads ./.env. Hosts that mount configuration as a file rather than as
+# environment variables are also supported: Render writes "Secret Files" into /etc/secrets,
+# where nothing loads them automatically, so an uploaded .env there would silently do
+# nothing and every credential would fall back to its default.
+#
+# Real environment variables still win - override=False - so a value set in the host's
+# dashboard is never replaced by a stale uploaded file.
 load_dotenv()
+for _secret_env in ("/etc/secrets/.env", "/etc/secrets/env", "/etc/secrets/.env.paste"):
+    if os.path.isfile(_secret_env):
+        load_dotenv(_secret_env, override=False)
 
 
 @dataclass
