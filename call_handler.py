@@ -68,6 +68,10 @@ NOISE_TRANSCRIPTS = {
     "धन्यवाद", "शुक्रिया", "हम्म", "अच्छा", "हाँ", "हां", "नहीं", "ओह", "अरे",
 }
 
+# A single turn must never leave the caller in silence. Well above the ~1s a healthy
+# reply takes, but far below the 27s seen when the free LLM tier throttles.
+LLM_TURN_TIMEOUT_SECONDS = 7.0
+
 # One 20ms frame of outbound audio: 160 samples of 16-bit 8kHz PCM.
 OUT_FRAME_BYTES = 320
 
@@ -227,6 +231,14 @@ class CallHandler:
         logger.info("Starting greeting for session %s", self.session_id)
         try:
             await self._speak(greeting_text)
+            # Record it: without this the LLM starts its first turn with an empty history,
+            # does not know it has already greeted, and repeats the identity question the
+            # caller just answered.
+            if self.session_id and greeting_text:
+                self._last_spoken_text = greeting_text
+                asyncio.create_task(
+                    self.db.add_conversation_message(self.session_id, "assistant", greeting_text)
+                )
         except Exception as exc:
             logger.warning("Greeting TTS failed: %s", exc)
         finally:
@@ -354,7 +366,14 @@ class CallHandler:
                     }
                 )
         except Exception as exc:
-            logger.warning("Failed to send audio chunk to %s stream: %s", self.stream_provider, exc)
+            # The peer is gone. Drop the socket so the rest of this reply is discarded
+            # instead of logging one failure per 20ms frame for the whole utterance.
+            logger.warning(
+                "%s stream closed mid-reply, dropping remaining audio: %s",
+                self.stream_provider, exc,
+            )
+            self.ws = None
+            self._out_buffer = bytearray()
 
     async def _clear_output_audio(self) -> None:
         self._out_buffer = bytearray()
@@ -868,7 +887,19 @@ class CallHandler:
             logger.warning("LLM [%s] user=%r", self.session_id, user_input[:120])
 
             t_llm = time.monotonic()
-            response_text = await self.llm.generate_response(user_input)
+            try:
+                # Observed 27s and 12s replies on the free Gemini tier when it throttles.
+                # A caller will not sit through that, so the turn is capped and answered
+                # with a short holding line instead of dead air.
+                response_text = await asyncio.wait_for(
+                    self.llm.generate_response(user_input), timeout=LLM_TURN_TIMEOUT_SECONDS
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "LLM [%s] exceeded %ss, using holding reply",
+                    self.session_id, LLM_TURN_TIMEOUT_SECONDS,
+                )
+                response_text = "Ek minute, main dekh rahi hoon. Aap kab tak payment kar payenge?"
             llm_ms = int((time.monotonic() - t_llm) * 1000)
 
             asyncio.create_task(
