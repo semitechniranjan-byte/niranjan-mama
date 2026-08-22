@@ -115,6 +115,9 @@ class CallHandler:
         self.ws = None
         self.stream_sid: Optional[str] = None
         self.stream_provider: str = "twilio"
+        # Vobiz reports its stream rate in the start event (8k/16k/24k) and expects
+        # outbound audio at the same rate; the others are always 8kHz.
+        self.stream_sample_rate: int = 8000
         self._audio_buffer = bytearray()
         self._out_buffer = bytearray()
         self._out_sequence = 0
@@ -258,7 +261,9 @@ class CallHandler:
 
     def _stream_audio_encoding(self) -> tuple[str, int]:
         """(Cartesia output encoding, sample rate) for the currently attached stream provider."""
-        if self.stream_provider in ("exotel", "plivo", "vobiz"):
+        if self.stream_provider == "vobiz":
+            return "pcm_s16le", self.stream_sample_rate
+        if self.stream_provider in ("exotel", "plivo"):
             return "pcm_s16le", 8000
         return "pcm_mulaw", 8000
 
@@ -299,14 +304,16 @@ class CallHandler:
         payload = base64.b64encode(frame).decode("ascii")
         try:
             if self.stream_provider == "vobiz":
-                # Vobiz keys its stream messages on "type" rather than "event", and takes
-                # no stream id on outbound audio.
+                # Vobiz routes outbound audio by streamId and keys messages on "event".
+                # Sending "type", or omitting streamId, is accepted silently and never
+                # played - the caller just hears nothing.
                 await self.ws.send_json(
                     {
-                        "type": "playAudio",
+                        "event": "playAudio",
+                        "streamId": self.stream_sid,
                         "media": {
                             "contentType": "audio/x-l16",
-                            "sampleRate": 8000,
+                            "sampleRate": self.stream_sample_rate,
                             "payload": payload,
                         },
                     }
@@ -353,8 +360,8 @@ class CallHandler:
             return
         try:
             if self.stream_provider == "vobiz":
-                # Barge-in: drop buffered-but-unplayed audio. Vobiz takes no stream id.
-                await self.ws.send_json({"type": "clearAudio"})
+                # Barge-in: drop buffered-but-unplayed audio.
+                await self.ws.send_json({"event": "clearAudio", "streamId": self.stream_sid})
             elif self.stream_provider == "plivo":
                 # Plivo's barge-in equivalent: drops whatever it has buffered but not played.
                 await self.ws.send_json({"event": "clearAudio", "streamId": self.stream_sid})

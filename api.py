@@ -1420,18 +1420,39 @@ async def vobiz_stream_websocket(websocket: WebSocket) -> None:
             message = await websocket.receive_json()
             event = message.get("type") or message.get("event")
             if event == "start":
-                call_uuid = message.get("callUUID") or message.get("call_uuid") or ""
-                logger.info(
-                    "Vobiz stream started for session %s (callUUID=%s, format=%s)",
-                    session_id, call_uuid, message.get("mediaFormat"),
+                start = message.get("start", {}) or {}
+                # Outbound audio is routed by streamId, so this must come from the start
+                # payload - not the session id, which Vobiz does not recognise.
+                stream_id = (
+                    start.get("streamId")
+                    or start.get("stream_id")
+                    or message.get("streamId")
+                    or ""
                 )
-                # The stream is the most reliable source of the real call id, which the
-                # hangup API needs; the create-call response only had a request_uuid.
+                # The call id lives in start.callId; the create-call response only carried
+                # a request_uuid, and hangup needs the real one.
+                call_uuid = (
+                    start.get("callId")
+                    or start.get("call_id")
+                    or message.get("callUUID")
+                    or ""
+                )
+                # Vobiz negotiates the rate (8k/16k/24k) and expects audio back at the same
+                # rate. Assuming 8kHz against a 16kHz stream plays everything at the wrong
+                # speed and makes transcription unreliable.
+                fmt = start.get("mediaFormat") or {}
+                rate = fmt.get("sampleRate") if isinstance(fmt, dict) else None
+                logger.warning(
+                    "Vobiz stream start: session=%s streamId=%s callId=%s format=%s",
+                    session_id, stream_id, call_uuid, fmt,
+                )
                 if call_uuid:
                     call.call_sid = call_uuid
                 if session_id:
                     await handler.db.update_session(session_id, websocket_connected=True)
-                await call.attach_stream(websocket, call_uuid or session_id, provider="vobiz")
+                await call.attach_stream(websocket, stream_id, provider="vobiz")
+                if isinstance(rate, int) and rate in (8000, 16000, 24000):
+                    call.stream_sample_rate = rate
             elif event == "media":
                 payload_b64 = message.get("payload") or (message.get("media") or {}).get("payload")
                 if payload_b64:
