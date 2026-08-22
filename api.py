@@ -1004,7 +1004,9 @@ async def get_app_settings() -> dict:
         # Which integrations actually have credentials, so the UI can show real status
         # instead of assuming everything is wired up.
         "credentials": {
-            "mongo": bool(settings.MONGO_URI),
+            # MONGO_URI defaults to a localhost URI, so a plain truth test reports
+            # "configured" on a host that never received the real connection string.
+            "mongo": bool(settings.MONGO_URI) and "localhost" not in settings.MONGO_URI,
             "deepgram": bool(settings.DEEPGRAM_API_KEY),
             "groq": bool(settings.GROQ_API_KEY),
             "cerebras": bool(settings.CEREBRAS_API_KEY),
