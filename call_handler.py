@@ -40,7 +40,10 @@ VAD_SILENCE_RMS_THRESHOLD = 400
 VAD_SILENCE_FRAMES_TO_END = 15  # ~300ms of silence ends an utterance. 25 (500ms) was
 # half a second of dead air on every single turn before the bot even started thinking.
 VAD_MIN_SPEECH_FRAMES = 3
-VAD_MIN_UTTERANCE_BYTES = 800  # ignore blips shorter than ~100ms
+# Deepgram returned an empty transcript for every utterance under roughly half a
+# second in live calls, so those round trips cost latency and quota for nothing.
+# Expressed as seconds and converted per stream, since the rate varies by provider.
+VAD_MIN_UTTERANCE_SECONDS = 0.4
 # Sustained speech required to talk over the bot. 3 frames (60ms) fired on line noise and
 # chopped the bot mid-sentence; ~160ms is a real word.
 VAD_BARGEIN_SPEECH_FRAMES = 8
@@ -468,10 +471,14 @@ class CallHandler:
         self._speech_frames = 0
         self._silence_frames = 0
         self._speech_started = False
-        if len(audio_bytes) < VAD_MIN_UTTERANCE_BYTES:
+        # 16-bit samples, so two bytes per sample.
+        min_bytes = int(VAD_MIN_UTTERANCE_SECONDS * self.stream_sample_rate * 2)
+        if len(audio_bytes) < min_bytes:
             logger.warning(
-                "AUDIO-IN [%s] utterance too short (%s bytes < %s), ignored",
-                self.session_id, len(audio_bytes), VAD_MIN_UTTERANCE_BYTES,
+                "AUDIO-IN [%s] utterance too short (%.2fs < %.2fs), skipping STT",
+                self.session_id,
+                len(audio_bytes) / 2 / max(1, self.stream_sample_rate),
+                VAD_MIN_UTTERANCE_SECONDS,
             )
             return
         try:
