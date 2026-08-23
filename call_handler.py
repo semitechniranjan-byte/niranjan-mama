@@ -3,7 +3,7 @@ import base64
 import logging
 import re
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
 try:
@@ -142,6 +142,11 @@ class CallHandler:
         self._speech_threshold = float(VAD_SILENCE_RMS_THRESHOLD)
         self._last_transcript = ""
         self._repeat_count = 0
+        # Authoritative turn history for this call. Persisting to MongoDB is async so the
+        # caller never waits on it, which means the database can lag a turn behind; reading
+        # history back from it raced, the LLM saw an empty conversation, and the bot
+        # restarted its script - repeating the intro the caller had already heard.
+        self.conversation: List[Dict[str, str]] = []
 
     async def apply_prompt_config(
         self,
@@ -222,6 +227,7 @@ class CallHandler:
         self._speech_threshold = float(VAD_SILENCE_RMS_THRESHOLD)
         self._last_transcript = ""
         self._repeat_count = 0
+        self.conversation = []
         if start_greeting:
             asyncio.create_task(self.initial_greeting(self.greeting_text))
         return self.initialized or self.llm.ready
@@ -237,11 +243,13 @@ class CallHandler:
             # Record it: without this the LLM starts its first turn with an empty history,
             # does not know it has already greeted, and repeats the identity question the
             # caller just answered.
-            if self.session_id and greeting_text:
+            if greeting_text:
                 self._last_spoken_text = greeting_text
-                asyncio.create_task(
-                    self.db.add_conversation_message(self.session_id, "assistant", greeting_text)
-                )
+                self.conversation.append({"role": "assistant", "content": greeting_text})
+                if self.session_id:
+                    asyncio.create_task(
+                        self.db.add_conversation_message(self.session_id, "assistant", greeting_text)
+                    )
         except Exception as exc:
             logger.warning("Greeting TTS failed: %s", exc)
         finally:
@@ -899,7 +907,10 @@ class CallHandler:
                 # A caller will not sit through that, so the turn is capped and answered
                 # with a short holding line instead of dead air.
                 response_text = await asyncio.wait_for(
-                    self.llm.generate_response(user_input), timeout=LLM_TURN_TIMEOUT_SECONDS
+                    self.llm.generate_response(
+                        user_input, conversation_history=list(self.conversation)
+                    ),
+                    timeout=LLM_TURN_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
                 logger.warning(
@@ -912,6 +923,8 @@ class CallHandler:
             asyncio.create_task(
                 self.db.add_conversation_message(self.session_id, "assistant", response_text)
             )
+            self.conversation.append({"role": "user", "content": user_input})
+            self.conversation.append({"role": "assistant", "content": response_text})
             self._last_spoken_text = response_text
 
             t_tts = time.monotonic()
