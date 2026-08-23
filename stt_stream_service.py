@@ -53,6 +53,8 @@ class DeepgramStreamingSTT:
         self.connected = False
         # Confidence of the most recent final transcript, for the noise filter.
         self.last_confidence = 0.0
+        # Stabilised fragments awaiting a sentence boundary.
+        self._pending: list[str] = []
 
     def _url(self) -> str:
         params = {
@@ -121,15 +123,27 @@ class DeepgramStreamingSTT:
                     transcript = (alt.get("transcript") or "").strip()
                     if not transcript:
                         continue
-                    # speech_final marks a completed sentence. is_final without it is a
-                    # stabilised fragment mid-sentence, which would split a turn in two.
                     if msg.get("speech_final"):
+                        # A completed sentence: emit it and drop anything held back.
+                        pending = " ".join(self._pending + [transcript]).strip()
+                        self._pending = []
                         self.last_confidence = float(alt.get("confidence") or 0.0)
-                        await on_utterance(transcript, self.last_confidence)
+                        await on_utterance(pending, self.last_confidence)
+                    elif msg.get("is_final"):
+                        # Stabilised, but Deepgram has not called the sentence finished.
+                        # Hold it rather than dropping it - on a noisy line endpointing may
+                        # never fire, and discarding these loses the turn entirely.
+                        self._pending.append(transcript)
+                        self.last_confidence = float(alt.get("confidence") or 0.0)
                 elif kind == "UtteranceEnd":
-                    # Endpointing did not fire (usually continuous background noise).
-                    # Nothing to emit here; the last speech_final already went out.
-                    logger.info("STT-STREAM utterance end")
+                    # Endpointing did not fire - continuous background noise keeps the
+                    # channel "active". This is the backstop: emit whatever was held back
+                    # so a caller in a noisy place is not simply ignored.
+                    if self._pending:
+                        pending = " ".join(self._pending).strip()
+                        self._pending = []
+                        logger.warning("STT-STREAM utterance end, flushing %r", pending[:60])
+                        await on_utterance(pending, self.last_confidence)
         except Exception as exc:
             logger.info("STT-STREAM read loop ended: %s", exc)
         finally:
