@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { IconHistory, IconPhone, IconTrash, IconUser } from "../components/Icons";
+import { IconEye, IconHistory, IconPhone, IconTrash, IconUser } from "../components/Icons";
 import { DispositionBadge, maskPhone } from "../components/Disposition";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createOutboundCall, getDispositions, listSessions, listTemplates } from "../api/endpoints";
@@ -77,7 +77,10 @@ export function Calls() {
   const template = templates?.[0] ?? null;
   const useCaseKeys = Object.keys(template?.use_cases ?? {});
 
-  const [phone, setPhone] = useState("");
+  const [localNumber, setLocalNumber] = useState("");
+  const [showNumber, setShowNumber] = useState(false);
+  // The API wants E.164; the field only ever holds the local ten digits.
+  const phone = localNumber ? `+91${localNumber}` : "";
   const [useCase, setUseCase] = useState("");
   const [language, setLanguage] = useState("");
   const [fields, setFields] = useState<Field[]>([{ key: "CUSTOMER_NAME", value: "" }]);
@@ -163,13 +166,14 @@ export function Calls() {
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!phone.trim() || !effectiveUseCase || !effectiveLanguage) return;
+    // A partial number reaches the provider and fails there; catch it here.
+    if (localNumber.length !== 10 || !effectiveUseCase || !effectiveLanguage) return;
     setError(null);
     callMutation.mutate();
   };
 
   const reset = () => {
-    setPhone("");
+    setLocalNumber("");
     setUseCase("");
     setLanguage("");
     setFields([{ key: "CUSTOMER_NAME", value: "" }]);
@@ -200,17 +204,37 @@ export function Calls() {
         <Card Icon={IconPhone} title="Call Configuration">
           <label className="block text-xs font-medium text-slate-600">
             Phone Number <span className="text-red-500">*</span>
-            <div className="relative mt-1.5">
-              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                
+            {/* +91 is fixed rather than typed: it was the commonest way to get a call
+                rejected. Digits are hidden by default because this screen gets shown in
+                meetings, with a toggle for when the operator needs to check the number. */}
+            <div className="mt-1.5 flex items-stretch overflow-hidden rounded-lg border border-slate-300 transition focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
+              <span className="flex select-none items-center gap-1.5 border-r border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-600">
+                <IconPhone size={14} />
+                +91
               </span>
               <input
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="+917870278402"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 pl-9 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                value={localNumber}
+                onChange={(e) => setLocalNumber(e.target.value.replace(/[^\d]/g, "").slice(0, 10))}
+                type={showNumber ? "text" : "password"}
+                inputMode="numeric"
+                autoComplete="off"
+                placeholder="10 digit number"
+                className="min-w-0 flex-1 px-3 py-2 font-mono text-sm tracking-wide outline-none"
               />
+              <button
+                type="button"
+                onClick={() => setShowNumber((v) => !v)}
+                title={showNumber ? "Hide number" : "Show number"}
+                className="flex items-center px-3 text-slate-400 transition hover:text-indigo-600"
+              >
+                <IconEye size={15} />
+              </button>
             </div>
+            {localNumber.length > 0 && localNumber.length < 10 && (
+              <p className="mt-1 text-[11px] text-amber-600">
+                {10 - localNumber.length} digit{10 - localNumber.length === 1 ? "" : "s"} remaining
+              </p>
+            )}
           </label>
 
           <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -328,7 +352,7 @@ export function Calls() {
           </button>
           <button
             type="submit"
-            disabled={callMutation.isPending || !phone.trim() || !effectiveUseCase || !effectiveLanguage}
+            disabled={callMutation.isPending || localNumber.length !== 10 || !effectiveUseCase || !effectiveLanguage}
             className="rounded-lg bg-indigo-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
           >
             {callMutation.isPending ? "Calling..." : "Make Call"}
