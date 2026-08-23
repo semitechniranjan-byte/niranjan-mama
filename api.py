@@ -688,8 +688,13 @@ async def vobiz_answer(request: Request) -> PlainTextResponse:
         call = call_registry.get_call(session_id)
         if call is not None and call_uuid:
             call.call_sid = call_uuid
-        await handler.db.mark_session_state(
-            session_id, "active", source="vobiz_answer", call_uuid=call_uuid
+        # Vobiz waits on this response before it opens the audio stream, and the caller
+        # hears silence for the whole round trip. An Atlas write is not worth that delay,
+        # so it happens after the XML is on its way.
+        asyncio.create_task(
+            handler.db.mark_session_state(
+                session_id, "active", source="vobiz_answer", call_uuid=call_uuid
+            )
         )
     xml = handler.telephony_vobiz.build_stream_response(session_id or "")
     return PlainTextResponse(content=xml, media_type="application/xml")

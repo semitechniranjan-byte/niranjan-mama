@@ -263,9 +263,16 @@ class CallHandler:
             return
         self.greeting_in_progress = True
         self.initial_greeting_sent = True
-        logger.info("Starting greeting for session %s", self.session_id)
+        t0 = time.monotonic()
+        logger.warning("GREETING [%s] starting: %r", self.session_id, (greeting_text or "")[:60])
         try:
             await self._speak(greeting_text)
+            logger.warning(
+                "GREETING [%s] first audio %sms, %sms total",
+                self.session_id,
+                self._first_audio_ms,
+                int((time.monotonic() - t0) * 1000),
+            )
             # Record it: without this the LLM starts its first turn with an empty history,
             # does not know it has already greeted, and repeats the identity question the
             # caller just answered.
@@ -541,7 +548,12 @@ class CallHandler:
             # Deepgram sees the audio as it arrives and reports sentence boundaries itself,
             # so the buffer-and-upload path below is skipped entirely. Local VAD still runs,
             # but only to detect the caller talking over the bot.
-            await self.stt_stream.send_audio(linear16_chunk)
+            # Our own speech echoes back on the line. Feeding it to Deepgram makes it hear
+            # continuous audio, so endpointing never fires and the caller's reply is not
+            # finalised until long after they finished - a 16 second wait in one call.
+            # Barge-in is detected locally, so nothing is lost by staying quiet here.
+            if not self.tts.tts_in_progress:
+                await self.stt_stream.send_audio(linear16_chunk)
             speaking_for = time.monotonic() - self._speak_started
             if (
                 is_speech
