@@ -128,6 +128,8 @@ class CallHandler:
         self._caller_speaking = False
         # Bytes of audio queued for the most recent reply, used to wait out the sign-off.
         self._spoken_bytes = 0
+        self._first_audio_ms: Optional[int] = None
+        self._speak_started = 0.0
         self.first_silence_time = 12
         self.second_silence_time = 12
         self.call_end_delay = 2
@@ -328,6 +330,11 @@ class CallHandler:
         encoding, sample_rate = self._stream_audio_encoding()
         self._out_buffer = bytearray()
         self._spoken_bytes = 0
+        # Audio is streamed to the caller as Cartesia produces it, so what they actually
+        # wait for is the first chunk - not the whole reply being generated. Reporting only
+        # the total made TTS look far worse than it sounds on the line.
+        self._first_audio_ms = None
+        self._speak_started = time.monotonic()
         await self.tts.synthesize(text, callback=self._send_audio_chunk, encoding=encoding, sample_rate=sample_rate)
         await self._flush_output_audio()
 
@@ -340,6 +347,8 @@ class CallHandler:
         """
         if not self.ws:
             return
+        if self._first_audio_ms is None:
+            self._first_audio_ms = int((time.monotonic() - self._speak_started) * 1000)
         self._out_buffer.extend(chunk)
         self._spoken_bytes += len(chunk)
         while len(self._out_buffer) >= OUT_FRAME_BYTES:
@@ -1017,9 +1026,12 @@ class CallHandler:
             t_tts = time.monotonic()
             await self._speak(response_text)
             tts_ms = int((time.monotonic() - t_tts) * 1000)
+            first_audio = self._first_audio_ms if self._first_audio_ms is not None else tts_ms
             logger.warning(
-                "TURN [%s] llm=%sms tts=%sms total=%sms reply=%r",
-                self.session_id, llm_ms, tts_ms, llm_ms + tts_ms, (response_text or "")[:80],
+                "TURN [%s] llm=%sms tts_first_audio=%sms | CALLER WAITED %sms "
+                "(tts_total=%sms) reply=%r",
+                self.session_id, llm_ms, first_audio, llm_ms + first_audio,
+                tts_ms, (response_text or "")[:70],
             )
 
             if self._is_closing_line(response_text):
