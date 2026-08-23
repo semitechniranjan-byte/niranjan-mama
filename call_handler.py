@@ -82,6 +82,10 @@ LLM_TURN_TIMEOUT_SECONDS = 7.0
 SILENCE_NUDGE = "Hello, aap sun rahe hain?"
 SILENCE_GOODBYE = "Koi jawab nahi mila. Hum aapko baad mein call karenge, aapka din shubh rahe, bye!"
 
+# The script always signs off with "aapka din shubh rahe, bye!". Matching the phrase
+# rather than the bare word "bye" avoids ending the call when it appears mid-sentence.
+CLOSING_MARKERS = ("din shubh rahe", "bye!", "shubh rahe, bye")
+
 # One 20ms frame of outbound audio: 160 samples of 16-bit 8kHz PCM.
 OUT_FRAME_BYTES = 320
 
@@ -122,6 +126,8 @@ class CallHandler:
         self.silence_prompt_given = False
         self.first_silence_msg = None
         self._caller_speaking = False
+        # Bytes of audio queued for the most recent reply, used to wait out the sign-off.
+        self._spoken_bytes = 0
         self.first_silence_time = 12
         self.second_silence_time = 12
         self.call_end_delay = 2
@@ -321,6 +327,7 @@ class CallHandler:
     async def _speak(self, text: str) -> None:
         encoding, sample_rate = self._stream_audio_encoding()
         self._out_buffer = bytearray()
+        self._spoken_bytes = 0
         await self.tts.synthesize(text, callback=self._send_audio_chunk, encoding=encoding, sample_rate=sample_rate)
         await self._flush_output_audio()
 
@@ -334,6 +341,7 @@ class CallHandler:
         if not self.ws:
             return
         self._out_buffer.extend(chunk)
+        self._spoken_bytes += len(chunk)
         while len(self._out_buffer) >= OUT_FRAME_BYTES:
             frame = bytes(self._out_buffer[:OUT_FRAME_BYTES])
             del self._out_buffer[:OUT_FRAME_BYTES]
@@ -526,6 +534,18 @@ class CallHandler:
             self._silence_frames += 1
             if self._silence_frames >= VAD_SILENCE_FRAMES_TO_END:
                 await self._finalize_utterance()
+
+    def _is_closing_line(self, text: str) -> bool:
+        """True when the reply is the script's sign-off.
+
+        The prompt tells the agent to end the call after saying goodbye, but nothing acted
+        on it: the bot said "bye" and then sat waiting for the silence timer, leaving the
+        caller on a dead line for another 24 seconds.
+        """
+        if not text:
+            return False
+        low = text.lower()
+        return any(marker in low for marker in CLOSING_MARKERS)
 
     async def _on_stream_transcript(self, transcript: str, confidence: float) -> None:
         """A completed sentence from the live socket. Same filtering as the batch path."""
@@ -851,7 +871,7 @@ class CallHandler:
                 logger.warning("Failed to hang up call %s: %s", self.call_sid, exc)
         await self.finalize_call(self.session_id, status="completed", reason="max_duration_reached")
 
-    async def _hangup_active_call(self) -> None:
+    async def _hangup_active_call(self, reason: str = "silence_timeout") -> None:
         if self.call_provider == "exotel":
             # Exotel's REST call resource rejects a Twilio-style status update
             # ("403 Method not allowed"). For a Voicebot stream the supported way to end
@@ -876,7 +896,7 @@ class CallHandler:
                 await self.telephony.hangup_call(self.call_sid)
             except Exception as exc:
                 logger.warning("Failed to hang up %s call %s: %s", self.call_provider, self.call_sid, exc)
-        await self.finalize_call(self.session_id, status="completed", reason="silence_timeout")
+        await self.finalize_call(self.session_id, status="completed", reason=reason)
 
     def _should_bargein(self, transcript: str) -> bool:
         if self.greeting_in_progress:
@@ -1001,6 +1021,23 @@ class CallHandler:
                 "TURN [%s] llm=%sms tts=%sms total=%sms reply=%r",
                 self.session_id, llm_ms, tts_ms, llm_ms + tts_ms, (response_text or "")[:80],
             )
+
+            if self._is_closing_line(response_text):
+                # _speak returns once the frames are queued, not once they have played, so
+                # hanging up here would cut the goodbye off mid-word. Wait out the audio
+                # just sent, measured from its actual length.
+                audio_seconds = self._spoken_bytes / 2 / max(1, self.stream_sample_rate)
+                logger.warning(
+                    "CLOSING [%s] sign-off sent (%.1fs of audio), ending call",
+                    self.session_id, audio_seconds,
+                )
+                self.should_end_call = True
+                self.call_ending = True
+                self._cancel_silence_timer()
+                await asyncio.sleep(audio_seconds + 0.7)
+                await self._hangup_active_call(reason="agent_closed_call")
+                return
+
             self._start_silence_timer()
         finally:
             self.is_processing = False
