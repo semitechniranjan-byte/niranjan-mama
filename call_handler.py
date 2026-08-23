@@ -49,6 +49,11 @@ VAD_MIN_UTTERANCE_SECONDS = 0.4
 # Sustained speech required to talk over the bot. 3 frames (60ms) fired on line noise and
 # chopped the bot mid-sentence; ~160ms is a real word.
 VAD_BARGEIN_SPEECH_FRAMES = 8
+# The caller's last word, and the echo of our own audio, keep arriving for a moment
+# after the bot starts replying. Without a grace window that tail counted as an
+# interruption and cut the reply off after ~160ms - the caller heard the bot start,
+# stop, and then silence.
+BARGEIN_GRACE_SECONDS = 0.8
 
 # ---- Background-noise defences -------------------------------------------------------
 # Indian mobile calls are frequently made from traffic, shops and rooms with a TV on. A
@@ -357,6 +362,9 @@ class CallHandler:
         # the total made TTS look far worse than it sounds on the line.
         self._first_audio_ms = None
         self._speak_started = time.monotonic()
+        # Any speech frames counted while the caller was finishing must not carry over
+        # into the reply and trip barge-in immediately.
+        self._speech_frames = 0
         await self.tts.synthesize(text, callback=self._send_audio_chunk, encoding=encoding, sample_rate=sample_rate)
         await self._flush_output_audio()
 
@@ -534,10 +542,12 @@ class CallHandler:
             # so the buffer-and-upload path below is skipped entirely. Local VAD still runs,
             # but only to detect the caller talking over the bot.
             await self.stt_stream.send_audio(linear16_chunk)
+            speaking_for = time.monotonic() - self._speak_started
             if (
                 is_speech
                 and self.tts.tts_in_progress
                 and not self.greeting_in_progress
+                and speaking_for > BARGEIN_GRACE_SECONDS
             ):
                 self._speech_frames += 1
                 if self._speech_frames == VAD_BARGEIN_SPEECH_FRAMES:
@@ -558,6 +568,7 @@ class CallHandler:
                 self._speech_frames == VAD_BARGEIN_SPEECH_FRAMES
                 and self.tts.tts_in_progress
                 and not self.greeting_in_progress
+                and (time.monotonic() - self._speak_started) > BARGEIN_GRACE_SECONDS
             ):
                 await self._interrupt_playback()
         elif self._speech_started:
