@@ -1,7 +1,9 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import { IconHistory, IconPhone, IconTrash, IconUser } from "../components/Icons";
+import { DispositionBadge } from "../components/Disposition";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createOutboundCall, listTemplates } from "../api/endpoints";
+import { createOutboundCall, getDispositions, listSessions, listTemplates } from "../api/endpoints";
 import type { Template } from "../api/types";
 
 const HISTORY_KEY = "testCallHistory";
@@ -30,13 +32,13 @@ function loadHistory(): HistoryEntry[] {
 }
 
 function Card({
-  icon,
+  Icon,
   title,
   subtitle,
   action,
   children,
 }: {
-  icon: string;
+  Icon: ComponentType<{ size?: number }>;
   title: string;
   subtitle?: string;
   action?: React.ReactNode;
@@ -46,7 +48,9 @@ function Card({
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
         <div className="flex items-center gap-2">
-          <span className="text-base">{icon}</span>
+          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+            <Icon size={16} />
+          </span>
           <div>
             <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
             {subtitle && <p className="text-xs text-slate-400">{subtitle}</p>}
@@ -78,6 +82,24 @@ export function Calls() {
   const [language, setLanguage] = useState("");
   const [fields, setFields] = useState<Field[]>([{ key: "CUSTOMER_NAME", value: "" }]);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+
+  // History is stored locally and only knows whether the call was accepted for dialling.
+  // The outcome - promise to pay, refused, unreachable - is decided by the post-call
+  // analysis, so it is looked up from the session and refreshed while a call is running.
+  const { data: sessions } = useQuery({
+    queryKey: ["sessions"],
+    queryFn: listSessions,
+    refetchInterval: 8_000,
+  });
+  const { data: dispositions } = useQuery({ queryKey: ["dispositions"], queryFn: getDispositions });
+  const sessionById = useMemo(
+    () => new Map((sessions ?? []).map((s) => [s.session_id, s])),
+    [sessions],
+  );
+  const dispositionLabels = useMemo(
+    () => Object.fromEntries((dispositions ?? []).map((d) => [d.value, d.label])),
+    [dispositions],
+  );
   const [error, setError] = useState<string | null>(null);
 
   const effectiveUseCase = useCase || template?.default_use_case || useCaseKeys[0] || "";
@@ -175,7 +197,7 @@ export function Calls() {
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Card icon="" title="Call Configuration">
+        <Card Icon={IconPhone} title="Call Configuration">
           <label className="block text-xs font-medium text-slate-600">
             Phone Number <span className="text-red-500">*</span>
             <div className="relative mt-1.5">
@@ -241,7 +263,7 @@ export function Calls() {
         </Card>
 
         <Card
-          icon=""
+          Icon={IconUser}
           title="Customer Details"
           action={
             <button
@@ -315,7 +337,7 @@ export function Calls() {
       </form>
 
       <Card
-        icon=""
+        Icon={IconHistory}
         title={`Call History (${history.length})`}
         action={
           history.length > 0 ? (
@@ -332,20 +354,29 @@ export function Calls() {
           <p className="py-6 text-center text-sm text-slate-400">No test calls yet.</p>
         ) : (
           <div className="max-h-[28rem] space-y-3 overflow-y-auto pr-1">
-            {history.map((h) => (
-              <div key={h.id} className="rounded-xl border border-slate-200 p-3">
+            {history.map((h) => {
+              const session = h.sessionId ? sessionById.get(h.sessionId) : undefined;
+              const code = session?.disposition_code ?? null;
+              const live = session?.active;
+              return (
+              <div key={h.id} className="rounded-xl border border-slate-200 p-3 transition hover:border-slate-300">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-sm text-slate-800">{h.phone}</span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                        h.status === "success"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-red-100 text-red-600"
-                      }`}
-                    >
-                      {h.status}
-                    </span>
+                    {h.status === "success" ? (
+                      live ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                          On call
+                        </span>
+                      ) : (
+                        <DispositionBadge code={code} label={code ? dispositionLabels[code] : undefined} />
+                      )
+                    ) : (
+                      <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-medium text-red-600">
+                        {h.status}
+                      </span>
+                    )}
                     {h.language && (
                       <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
                         {h.language}
@@ -367,15 +398,43 @@ export function Calls() {
                       className="rounded-md px-1.5 py-1 text-slate-300 transition hover:bg-red-50 hover:text-red-500"
                       title="Remove"
                     >
-                      
+                      <IconTrash size={14} />
                     </button>
                   </div>
                 </div>
-                <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-emerald-300">
-                  {JSON.stringify(h.response, null, 2)}
-                </pre>
+
+                {/* A raw JSON dump is fine for debugging and wrong for a demo. Show what
+                    the call actually produced; the payload stays available on request. */}
+                <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-slate-500">
+                  {h.useCase && (
+                    <span>
+                      Use case <span className="font-medium text-slate-700">{h.useCase}</span>
+                    </span>
+                  )}
+                  {session?.call_status && (
+                    <span>
+                      Call <span className="font-medium text-slate-700">{session.call_status}</span>
+                    </span>
+                  )}
+                  {code && dispositionLabels[code] && (
+                    <span className="text-slate-600">{dispositionLabels[code]}</span>
+                  )}
+                  {!session && h.status === "success" && (
+                    <span className="text-slate-400">Waiting for the call to finish…</span>
+                  )}
+                </div>
+
+                <details className="mt-2 group">
+                  <summary className="cursor-pointer select-none text-[11px] text-slate-400 transition hover:text-slate-600">
+                    Raw response
+                  </summary>
+                  <pre className="mt-2 max-h-40 overflow-auto rounded-lg bg-slate-900 p-3 text-[11px] leading-relaxed text-emerald-300">
+                    {JSON.stringify(h.response, null, 2)}
+                  </pre>
+                </details>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>

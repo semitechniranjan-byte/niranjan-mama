@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { listSessions } from "../api/endpoints";
+import { DispositionBadge } from "../components/Disposition";
+import { getDispositions, listSessions } from "../api/endpoints";
 
 export function Sessions() {
   const { data: sessions, isLoading, error } = useQuery({
@@ -9,6 +10,11 @@ export function Sessions() {
     queryFn: listSessions,
   });
   const [statusFilter, setStatusFilter] = useState("all");
+  const { data: dispositions } = useQuery({ queryKey: ["dispositions"], queryFn: getDispositions });
+  const labels = useMemo(
+    () => Object.fromEntries((dispositions ?? []).map((d) => [d.value, d.label])),
+    [dispositions],
+  );
   const [directionFilter, setDirectionFilter] = useState("all");
   const [search, setSearch] = useState("");
 
@@ -66,6 +72,7 @@ export function Sessions() {
               <th className="px-4 py-2">Phone</th>
               <th className="px-4 py-2">Direction</th>
               <th className="px-4 py-2">Status</th>
+              <th className="px-4 py-2">Outcome</th>
               <th className="px-4 py-2">Created</th>
             </tr>
           </thead>
@@ -88,6 +95,20 @@ export function Sessions() {
                     {s.status}
                   </span>
                 </td>
+                <td className="px-4 py-2">
+                  {s.active ? (
+                    <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-amber-700">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                      On call
+                    </span>
+                  ) : (
+                    <DispositionBadge
+                      code={s.disposition_code}
+                      label={s.disposition_code ? labels[s.disposition_code] : undefined}
+                      size="sm"
+                    />
+                  )}
+                </td>
                 <td className="px-4 py-2 text-slate-500">
                   {s.created_at ? new Date(s.created_at).toLocaleString() : "-"}
                 </td>
@@ -95,7 +116,7 @@ export function Sessions() {
             ))}
             {filtered.length === 0 && !isLoading && (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
                   No sessions found.
                 </td>
               </tr>

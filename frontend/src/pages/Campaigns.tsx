@@ -10,7 +10,7 @@ import {
   listTemplates,
 } from "../api/endpoints";
 import type { Campaign, Template } from "../api/types";
-import { IconX } from "../components/Icons";
+import { IconX, IconEye } from "../components/Icons";
 
 const STATUS_DOT: Record<string, string> = {
   draft: "bg-slate-400",
@@ -450,9 +450,9 @@ export function Campaigns() {
                             <Link
                               to={`/campaigns/${c._id}`}
                               title="View"
-                              className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200"
+                              className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-slate-100 text-slate-500 transition hover:bg-indigo-600 hover:text-white"
                             >
-                              
+                              <IconEye size={15} />
                             </Link>
                           </td>
                           <td className="px-4 py-2 font-medium text-slate-700">RUN-{runNumber}</td>

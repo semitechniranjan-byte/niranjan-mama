@@ -1,5 +1,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
+import { IconPhone, IconPulse, IconCheck, IconClock, IconHourglass, IconX, IconMessage, IconChart } from "../components/Icons";
+import { DispositionCard } from "../components/Disposition";
 import { useQuery } from "@tanstack/react-query";
 import { getCampaign, getDispositions, getSession, getSessionMessages, getTemplate } from "../api/endpoints";
 import type { DatasheetRow } from "../api/types";
@@ -274,21 +276,21 @@ export function CampaignDetail() {
               {statSubTab === "Call Distribution" && (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   {[
-                    { label: "Total Calls", value: total, icon: "" },
-                    { label: "Ongoing Calls", value: ongoing, icon: "" },
-                    { label: "Answered", value: answered, icon: "" },
-                    { label: "Not Answered", value: notAnswered, icon: "" },
-                    { label: "Busy", value: 0, icon: "" },
-                    { label: "Failed", value: failed, icon: "" },
-                    { label: "Voicemail", value: 0, icon: "" },
-                    { label: "Answer Rate", value: `${answerRate}%`, icon: "" },
+                    { label: "Total Calls", value: total, Icon: IconPhone, tone: "bg-slate-100 text-slate-600" },
+                    { label: "Ongoing Calls", value: ongoing, Icon: IconPulse, tone: "bg-amber-50 text-amber-600" },
+                    { label: "Answered", value: answered, Icon: IconCheck, tone: "bg-emerald-50 text-emerald-600" },
+                    { label: "Not Answered", value: notAnswered, Icon: IconClock, tone: "bg-slate-100 text-slate-500" },
+                    { label: "Busy", value: 0, Icon: IconHourglass, tone: "bg-orange-50 text-orange-600" },
+                    { label: "Failed", value: failed, Icon: IconX, tone: "bg-rose-50 text-rose-600" },
+                    { label: "Voicemail", value: 0, Icon: IconMessage, tone: "bg-violet-50 text-violet-600" },
+                    { label: "Answer Rate", value: `${answerRate}%`, Icon: IconChart, tone: "bg-indigo-50 text-indigo-600" },
                   ].map((card) => (
-                    <div key={card.label} className="flex items-center gap-3 rounded-lg border border-slate-200 p-4">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-lg">
-                        {card.icon}
+                    <div key={card.label} className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-4 transition hover:border-slate-300 hover:shadow-sm">
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${card.tone}`}>
+                        <card.Icon size={17} />
                       </span>
-                      <div>
-                        <div className="text-xs text-slate-400">{card.label}</div>
+                      <div className="min-w-0">
+                        <div className="truncate text-xs text-slate-400">{card.label}</div>
                         <div className="text-lg font-semibold text-slate-900">{card.value}</div>
                       </div>
                     </div>
@@ -299,20 +301,13 @@ export function CampaignDetail() {
               {statSubTab === "Disposition Codes" && (
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   {dispositionCounts.map((d) => (
-                    <div key={d.code} className="flex items-center gap-3 rounded-lg border border-slate-200 p-4">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-md bg-slate-100 text-lg">
-                        
-                      </span>
-                      <div>
-                        <div className="text-xs font-medium text-slate-600">{dispositionLabel(d.code) || d.code}</div>
-                        <div className="text-xs text-slate-400">
-                          COUNT: <span className="font-semibold text-slate-900">{d.count}</span>
-                        </div>
-                        <div className="text-xs text-slate-400">
-                          AMOUNT: <span className="font-semibold text-emerald-600">₹{d.amount}</span>
-                        </div>
-                      </div>
-                    </div>
+                    <DispositionCard
+                      key={d.code}
+                      code={d.code}
+                      label={dispositionLabel(d.code) || d.code}
+                      count={d.count}
+                      amount={d.amount}
+                    />
                   ))}
                   {dispositionCounts.length === 0 && (
                     <p className="text-sm text-slate-400">No dispositions recorded yet.</p>

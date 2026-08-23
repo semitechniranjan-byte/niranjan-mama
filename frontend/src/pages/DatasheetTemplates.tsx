@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createDatasheetTemplate,
@@ -14,7 +14,7 @@ import {
   uploadDatasheet,
 } from "../api/endpoints";
 import type { Datasheet, DatasheetTemplate, MappingKeyCategories } from "../api/types";
-import { IconX } from "../components/Icons";
+import { IconX, IconTable, IconDatabase, IconTag, IconCloudUpload } from "../components/Icons";
 
 const DEFAULT_MAPPING_KEY_CATEGORIES: MappingKeyCategories = {
   model_data: [
@@ -126,12 +126,12 @@ function useDatasheetTemplates() {
 }
 
 function CardHeader({
-  icon,
+  Icon,
   accent,
   title,
   action,
 }: {
-  icon: string;
+  Icon: ComponentType<{ size?: number }>;
   accent: string;
   title: string;
   action?: React.ReactNode;
@@ -142,7 +142,7 @@ function CardHeader({
         <span
           className={`flex h-8 w-8 items-center justify-center rounded-lg text-base ${accent}`}
         >
-          {icon}
+          <Icon size={16} />
         </span>
         <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
       </div>
@@ -170,7 +170,7 @@ function RequiredColumnsCard({
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       <CardHeader
-        icon=""
+        Icon={IconTable}
         accent="bg-blue-50 text-blue-600"
         title="Required Columns"
         action={
@@ -365,7 +365,7 @@ function ColumnMappingsCard({
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       <CardHeader
-        icon=""
+        Icon={IconDatabase}
         accent="bg-slate-50 text-indigo-600"
         title="Column Mappings"
         action={
@@ -447,7 +447,7 @@ function AttemptColumnsCard({
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:shadow-md">
       <CardHeader
-        icon=""
+        Icon={IconTag}
         accent="bg-emerald-50 text-emerald-600"
         title="Attempt Columns"
         action={<span className="text-xs text-slate-400">Click to toggle</span>}
@@ -973,7 +973,7 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
             className="w-full max-w-lg overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
           >
             <CardHeader
-              icon=""
+              Icon={IconCloudUpload}
               accent="bg-blue-50 text-blue-600"
               title="Upload a datasheet"
               action={

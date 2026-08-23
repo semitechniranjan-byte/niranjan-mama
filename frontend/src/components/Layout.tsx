@@ -71,8 +71,8 @@ export function Layout({ children }: { children: ReactNode }) {
 
   return (
     // h-screen + overflow-hidden keeps the sidebar fixed while only the main pane scrolls.
-    <div className="flex h-screen overflow-hidden bg-slate-100 text-slate-900">
-      <aside className="flex w-60 shrink-0 flex-col border-r border-slate-800/60 bg-slate-900">
+    <div className="flex h-screen overflow-hidden bg-[var(--app-bg)] text-slate-900">
+      <aside className="flex w-60 shrink-0 flex-col border-r border-black/20 bg-[var(--app-sidebar)]">
         <div className="flex items-center gap-2.5 px-5 py-5">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600 text-white">
             <IconHeadset size={18} />
@@ -98,8 +98,8 @@ export function Layout({ children }: { children: ReactNode }) {
                     className={({ isActive }) =>
                       `flex items-center gap-3 rounded-md px-3 py-2 text-sm transition ${
                         isActive
-                          ? "bg-indigo-600 font-medium text-white"
-                          : "text-slate-400 hover:bg-slate-800 hover:text-slate-100"
+                          ? "bg-indigo-600 font-medium text-white shadow-sm shadow-indigo-900/40"
+                          : "text-slate-400 hover:bg-[var(--app-sidebar-hover)] hover:text-white"
                       }`
                     }
                   >
@@ -112,7 +112,7 @@ export function Layout({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="border-t border-slate-800 px-4 py-3">
+        <div className="border-t border-white/10 px-4 py-3">
           <div className="mb-2 truncate text-[11px] text-slate-300" title={email}>
             {email}
           </div>

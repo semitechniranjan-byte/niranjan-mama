@@ -33,6 +33,11 @@ export interface Session {
   reason?: string;
   recording_url?: string | null;
   campaign_id?: string;
+  /** Outcome decided by the post-call analysis, e.g. PTP, RTP, ICR. Absent until analysed. */
+  disposition_code?: string | null;
+  /** Provider-reported call state, e.g. completed, no-answer, failed. */
+  call_status?: string | null;
+  telephony_provider?: string | null;
 }
 
 export interface ConversationMessage {

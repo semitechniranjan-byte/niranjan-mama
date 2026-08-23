@@ -1,4 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
+import {
+  IconCpu,
+  IconMic,
+  IconSpeaker,
+  IconLink,
+  IconLogs,
+  IconPhone,
+  IconPlug,
+  IconSettings,
+  IconTag,
+  IconWaveform,
+} from "../components/Icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getAppSettings,
@@ -30,11 +42,14 @@ const TABS = ["Providers", "Calling", "Voice & Timing", "Dispositions", "System"
 type Tab = (typeof TABS)[number];
 
 /** Which AppSettings keys hold the provider + model for each capability. */
-const CAPABILITY_FIELDS: Record<string, { provider: keyof AppSettings; model?: keyof AppSettings; icon: string; accent: string }> = {
-  stt: { provider: "stt_provider", model: "stt_model", icon: "", accent: "bg-blue-50 text-blue-600" },
-  llm: { provider: "llm_provider", model: "llm_model", icon: "", accent: "bg-slate-50 text-indigo-600" },
-  tts: { provider: "tts_provider", model: "tts_model_id", icon: "", accent: "bg-amber-50 text-amber-600" },
-  telephony: { provider: "telephony_provider", icon: "", accent: "bg-teal-50 text-teal-600" },
+const CAPABILITY_FIELDS: Record<
+  string,
+  { provider: keyof AppSettings; model?: keyof AppSettings; Icon: ComponentType<{ size?: number }>; accent: string }
+> = {
+  stt: { provider: "stt_provider", model: "stt_model", Icon: IconMic, accent: "bg-blue-50 text-blue-600" },
+  llm: { provider: "llm_provider", model: "llm_model", Icon: IconCpu, accent: "bg-indigo-50 text-indigo-600" },
+  tts: { provider: "tts_provider", model: "tts_model_id", Icon: IconSpeaker, accent: "bg-amber-50 text-amber-600" },
+  telephony: { provider: "telephony_provider", Icon: IconPhone, accent: "bg-teal-50 text-teal-600" },
 };
 
 /** Renders one capability's provider + model pickers straight from the server registry,
@@ -59,7 +74,7 @@ function ProviderCard({
   const upcoming = capability.providers.filter((p) => !p.available);
 
   return (
-    <Card icon={meta.icon} accent={meta.accent} title={capability.label}>
+    <Card Icon={meta.Icon} accent={meta.accent} title={capability.label}>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <Field
           label="Provider"
@@ -110,14 +125,14 @@ function ProviderCard({
 }
 
 function Card({
-  icon,
+  Icon,
   accent,
   title,
   subtitle,
   children,
   action,
 }: {
-  icon: string;
+  Icon: ComponentType<{ size?: number }>;
   accent: string;
   title: string;
   subtitle?: string;
@@ -129,7 +144,7 @@ function Card({
       <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
         <div className="flex items-center gap-3">
           <span className={`flex h-9 w-9 items-center justify-center rounded-xl text-base ${accent}`}>
-            {icon}
+            <Icon size={17} />
           </span>
           <div>
             <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
@@ -263,7 +278,7 @@ function DispositionsEditor() {
 
   return (
     <Card
-      icon=""
+      Icon={IconPlug}
       accent="bg-purple-50 text-purple-600"
       title="Disposition codes"
       subtitle="Call outcomes returned by the analysis step; also colour the campaign badges."
@@ -411,7 +426,7 @@ export function Settings() {
       {tab === "Calling" && (
         <div className="space-y-4">
           <Card
-            icon=""
+            Icon={IconPhone}
             accent="bg-teal-50 text-teal-600"
             title="Outbound calling"
             subtitle="Applies to every campaign."
@@ -437,7 +452,7 @@ export function Settings() {
       {tab === "Voice & Timing" && (
         <div className="space-y-4">
           <Card
-            icon=""
+            Icon={IconWaveform}
             accent="bg-orange-50 text-orange-600"
             title="Conversation timing"
             subtitle="How patient the agent is before re-prompting or hanging up."
@@ -471,7 +486,7 @@ export function Settings() {
           </Card>
 
           <Card
-            icon=""
+            Icon={IconTag}
             accent="bg-blue-50 text-blue-600"
             title="Language fallback"
             subtitle="Used when a campaign runs on Auto and a row has no language of its own."
@@ -487,7 +502,7 @@ export function Settings() {
           </Card>
 
           <Card
-            icon=""
+            Icon={IconSettings}
             accent="bg-amber-50 text-amber-600"
             title="Default voice"
             subtitle="Used when a language in Templates does not specify its own voice."
@@ -511,7 +526,7 @@ export function Settings() {
       {tab === "System" && (
         <div className="space-y-4">
           <Card
-            icon=""
+            Icon={IconLink}
             accent="bg-emerald-50 text-emerald-600"
             title="System health"
             subtitle="Capabilities powering every call."
@@ -528,11 +543,11 @@ export function Settings() {
             </p>
           </Card>
 
-          <Card icon="" accent="bg-slate-100 text-slate-600" title="Connection">
+          <Card Icon={IconLogs} accent="bg-slate-100 text-slate-600" title="Connection">
             <p className="font-mono text-sm text-slate-600">{apiUrl}</p>
           </Card>
 
-          <Card icon="" accent="bg-slate-100 text-slate-600" title="Recent activity">
+          <Card Icon={IconCpu} accent="bg-slate-100 text-slate-600" title="Recent activity">
             <pre className="max-h-96 overflow-auto rounded-xl bg-slate-900 p-4 text-xs leading-relaxed text-slate-100">
               {logs || "No activity recorded yet."}
             </pre>

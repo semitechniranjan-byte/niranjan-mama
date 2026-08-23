@@ -78,7 +78,9 @@ ROLE_PAGES = {
         "/", "/campaigns", "/sessions", "/calls", "/agents",
         "/analytics", "/templates", "/datasheets", "/settings",
     ],
-    "user": ["/", "/campaigns", "/calls", "/datasheets"],
+    # Conversations is where transcripts and outcomes live, which is the whole point of
+    # the product for a collections operator. Config, prompts and agents stay admin-only.
+    "user": ["/", "/campaigns", "/sessions", "/calls", "/datasheets"],
 }
 
 

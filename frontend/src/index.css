@@ -1,14 +1,54 @@
 @import "tailwindcss";
 
+/*
+ * The console was flat slate-grey throughout, which read as unfinished next to the
+ * content it frames. These tokens give it one warm neutral ground and a single indigo
+ * accent, so pages look deliberate without every page inventing its own palette.
+ */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
+
+  /* Page ground: a hint of warmth stops large empty areas looking cold and washed out. */
+  --app-bg: #f6f7fb;
+  --app-panel: #ffffff;
+  --app-border: #e6e8f0;
+  --app-sidebar: #171a2b;
+  --app-sidebar-hover: #23273c;
+  --app-accent: #4f46e5;
 }
 
 body {
   margin: 0;
-  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+  font-family: "Inter", system-ui, "Segoe UI", Roboto, sans-serif;
+  /* Crisper type at small sizes, which is most of this UI. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--app-bg);
 }
 
 #root {
   min-height: 100svh;
+}
+
+/* Scrollbars: the default Windows bars are heavy and drew the eye away from content. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd0e0 transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cbd0e0;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #aab1c7;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
