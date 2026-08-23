@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { DispositionBadge, maskPhone } from "../components/Disposition";
+import { IconEye } from "../components/Icons";
 import { getDispositions, listSessions } from "../api/endpoints";
 
 export function Sessions() {
@@ -74,14 +75,19 @@ export function Sessions() {
               <th className="px-4 py-2">Status</th>
               <th className="px-4 py-2">Outcome</th>
               <th className="px-4 py-2">Created</th>
+              <th className="px-4 py-2 text-right">View</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((s) => (
               <tr key={s.session_id} className="border-t border-slate-100 transition hover:bg-slate-50/50">
                 <td className="px-4 py-2">
-                  <Link to={`/sessions/${s.session_id}`} className="text-slate-900 hover:underline">
-                    {s.session_id}
+                  <Link
+                    to={`/sessions/${s.session_id}`}
+                    className="font-mono text-xs text-slate-500 hover:text-indigo-600"
+                    title={s.session_id}
+                  >
+                    {s.session_id.slice(-8)}
                   </Link>
                 </td>
                 <td className="px-4 py-2 font-mono text-slate-600">{maskPhone(s.phone_number)}</td>
@@ -112,11 +118,20 @@ export function Sessions() {
                 <td className="px-4 py-2 text-slate-500">
                   {s.created_at ? new Date(s.created_at).toLocaleString() : "-"}
                 </td>
+                <td className="px-4 py-2 text-right">
+                  <Link
+                    to={`/sessions/${s.session_id}`}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-indigo-700"
+                  >
+                    <IconEye size={13} />
+                    View
+                  </Link>
+                </td>
               </tr>
             ))}
             {filtered.length === 0 && !isLoading && (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-slate-400">
+                <td colSpan={7} className="px-4 py-6 text-center text-slate-400">
                   No sessions found.
                 </td>
               </tr>

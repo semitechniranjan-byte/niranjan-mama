@@ -38,6 +38,8 @@ export interface Session {
   /** Provider-reported call state, e.g. completed, no-answer, failed. */
   call_status?: string | null;
   telephony_provider?: string | null;
+  /** Interruptions counted by the call handler, which knows the real timing. */
+  interruption_count?: number;
 }
 
 export interface ConversationMessage {

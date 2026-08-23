@@ -12,8 +12,10 @@
   --app-bg: #f6f7fb;
   --app-panel: #ffffff;
   --app-border: #e6e8f0;
-  --app-sidebar: #171a2b;
-  --app-sidebar-hover: #23273c;
+  /* Deep teal-slate: warmer than the near-black navy and it separates the chrome
+     from the indigo used for actions, so the active item actually stands out. */
+  --app-sidebar: #10233a;
+  --app-sidebar-hover: #1b3550;
   --app-accent: #4f46e5;
 }
 
