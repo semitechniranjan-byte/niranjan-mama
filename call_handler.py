@@ -9,6 +9,7 @@ from fastapi import HTTPException
 try:
     from .db_service import DatabaseService
     from .stt_service import DeepgramSTTService
+    from .stt_stream_service import DeepgramStreamingSTT
     from .llm_service import GroqLLMService
     from .tts_service import CartesiaTTSService
     from .twilio_service import TwilioVoiceService
@@ -22,6 +23,7 @@ try:
 except ImportError:  # pragma: no cover
     from db_service import DatabaseService
     from stt_service import DeepgramSTTService
+    from stt_stream_service import DeepgramStreamingSTT
     from llm_service import GroqLLMService
     from tts_service import CartesiaTTSService
     from twilio_service import TwilioVoiceService
@@ -147,6 +149,9 @@ class CallHandler:
         # history back from it raced, the LLM saw an empty conversation, and the bot
         # restarted its script - repeating the intro the caller had already heard.
         self.conversation: List[Dict[str, str]] = []
+        # Live transcription socket. When it is up, Deepgram decides where sentences
+        # end and the local silence timer is not used for turn-taking at all.
+        self.stt_stream: Optional[DeepgramStreamingSTT] = None
 
     async def apply_prompt_config(
         self,
@@ -277,12 +282,25 @@ class CallHandler:
         self._speech_frames = 0
         self._silence_frames = 0
         self._speech_started = False
+        if settings.STT_STREAMING:
+            # Opened per call so it carries this stream's negotiated sample rate.
+            self.stt_stream = DeepgramStreamingSTT(
+                sample_rate=self.stream_sample_rate,
+                encoding="linear16",
+                language=self.stt.language,
+            )
+            if not await self.stt_stream.connect(self._on_stream_transcript):
+                self.stt_stream = None
+
         if not self.initial_greeting_sent:
             asyncio.create_task(self.initial_greeting(self.greeting_text))
 
     async def detach_stream(self) -> None:
         self.ws = None
         self.stream_sid = None
+        if self.stt_stream is not None:
+            await self.stt_stream.close()
+            self.stt_stream = None
 
     def _stream_audio_encoding(self) -> tuple[str, int]:
         """(Cartesia output encoding, sample rate) for the currently attached stream provider."""
@@ -453,6 +471,24 @@ class CallHandler:
             )
             self._level_peak = 0.0
 
+        streaming = self.stt_stream is not None and self.stt_stream.connected
+        if streaming:
+            # Deepgram sees the audio as it arrives and reports sentence boundaries itself,
+            # so the buffer-and-upload path below is skipped entirely. Local VAD still runs,
+            # but only to detect the caller talking over the bot.
+            await self.stt_stream.send_audio(linear16_chunk)
+            if (
+                is_speech
+                and self.tts.tts_in_progress
+                and not self.greeting_in_progress
+            ):
+                self._speech_frames += 1
+                if self._speech_frames == VAD_BARGEIN_SPEECH_FRAMES:
+                    await self._interrupt_playback()
+            elif not is_speech:
+                self._speech_frames = 0
+            return
+
         if is_speech:
             self._audio_buffer.extend(raw_chunk)
             self._speech_frames += 1
@@ -472,6 +508,19 @@ class CallHandler:
             self._silence_frames += 1
             if self._silence_frames >= VAD_SILENCE_FRAMES_TO_END:
                 await self._finalize_utterance()
+
+    async def _on_stream_transcript(self, transcript: str, confidence: float) -> None:
+        """A completed sentence from the live socket. Same filtering as the batch path."""
+        logger.warning(
+            "STT-STREAM [%s] transcript=%r confidence=%.2f",
+            self.session_id, transcript, confidence,
+        )
+        if self.call_ending or self.should_end_call:
+            return
+        if self._is_noise_transcript(transcript, confidence):
+            return
+        if transcript:
+            await self.buffer_transcript(transcript)
 
     async def _finalize_utterance(self) -> None:
         audio_bytes = bytes(self._audio_buffer)

@@ -23,6 +23,9 @@ class Settings:
 
     DEEPGRAM_API_KEY: str = os.getenv("DEEPGRAM_API_KEY", "")
     DEEPGRAM_MODEL: str = os.getenv("DEEPGRAM_MODEL", "nova-2")
+    # Stream audio to Deepgram while the caller is still speaking instead of
+    # uploading each finished utterance. Set to "false" to fall back to the batch path.
+    STT_STREAMING: bool = os.getenv("STT_STREAMING", "true").lower() != "false"
     DEEPGRAM_LANGUAGE: str = os.getenv("DEEPGRAM_LANGUAGE", "hi")
 
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
