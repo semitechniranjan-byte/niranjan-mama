@@ -54,6 +54,13 @@ VAD_BARGEIN_SPEECH_FRAMES = 8
 # interruption and cut the reply off after ~160ms - the caller heard the bot start,
 # stop, and then silence.
 BARGEIN_GRACE_SECONDS = 0.8
+# After the bot is cut off, the caller's words still have to survive transcription and
+# the noise filter. When they do not - a cough, a half word, a lorry going past - the
+# bot has already stopped talking and nothing restarts it, so the line just dies until
+# the silence timer fires twelve seconds later. This is how long to wait before
+# inviting them to continue.
+INTERRUPTION_RECOVERY_SECONDS = 2.5
+INTERRUPTION_RECOVERY_LINE = "Ji, boliye?"
 
 # ---- Background-noise defences -------------------------------------------------------
 # Indian mobile calls are frequently made from traffic, shops and rooms with a TV on. A
@@ -171,6 +178,10 @@ class CallHandler:
         # Live transcription socket. When it is up, Deepgram decides where sentences
         # end and the local silence timer is not used for turn-taking at all.
         self.stt_stream: Optional[DeepgramStreamingSTT] = None
+        # What the bot was part-way through saying when it was cut off, so the next
+        # reply can carry on instead of repeating it.
+        self._interrupted_text = ""
+        self._recovery_timer = None
 
     async def apply_prompt_config(
         self,
@@ -254,6 +265,8 @@ class CallHandler:
         self._last_transcript = ""
         self._repeat_count = 0
         self.conversation = []
+        self._interrupted_text = ""
+        self._cancel_interruption_recovery()
         if start_greeting:
             asyncio.create_task(self.initial_greeting(self.greeting_text))
         return self.initialized or self.llm.ready
@@ -974,16 +987,59 @@ class CallHandler:
         """
         if not self.tts.tts_in_progress:
             return
+        # The grace window has to live here, not only in the audio loop. buffer_transcript
+        # also calls this on a transcript, which arrives after the caller has finished
+        # speaking - so their last word could still cut off a reply the bot had only just
+        # begun. Guarding the single place every caller goes through closes that.
+        if (time.monotonic() - self._speak_started) <= BARGEIN_GRACE_SECONDS:
+            logger.info(
+                "BARGE-IN [%s] ignored inside the %.1fs grace window",
+                self.session_id, BARGEIN_GRACE_SECONDS,
+            )
+            return
         self.interruption_count += 1
         self.interrupted_mid_speech = True
-        spoken = self.tts.get_last_spoken_text()
+        # Read what we were saying BEFORE stopping: stop() overwrites the tracker, so the
+        # previous ordering logged an empty string and told the LLM nothing useful.
+        self._interrupted_text = self._last_spoken_text or ""
+        delivered = self._first_audio_ms is not None
         await self.tts.stop()
         self._out_buffer = bytearray()
         await self._clear_output_audio()
         logger.warning(
-            "BARGE-IN [%s] caller interrupted (#%s); dropped remainder of %r",
-            self.session_id, self.interruption_count, (spoken or "")[:60],
+            "BARGE-IN [%s] interrupted (#%s) while saying %r (audio had started: %s)",
+            self.session_id, self.interruption_count,
+            self._interrupted_text[:70], delivered,
         )
+        self._arm_interruption_recovery()
+
+    def _arm_interruption_recovery(self) -> None:
+        """Make sure an interruption that produced nothing does not end the conversation."""
+        self._cancel_interruption_recovery()
+        loop = asyncio.get_running_loop()
+        self._recovery_timer = loop.call_later(
+            INTERRUPTION_RECOVERY_SECONDS,
+            lambda: asyncio.create_task(self._recover_from_interruption()),
+        )
+
+    def _cancel_interruption_recovery(self) -> None:
+        if self._recovery_timer:
+            self._recovery_timer.cancel()
+            self._recovery_timer = None
+
+    async def _recover_from_interruption(self) -> None:
+        self._recovery_timer = None
+        if self.call_ending or self.should_end_call:
+            return
+        # Something did arrive and is being handled - nothing to rescue.
+        if self.is_processing or self.transcript_buffer.strip() or self.tts.tts_in_progress:
+            return
+        logger.warning(
+            "RECOVERY [%s] interruption produced no usable speech; re-inviting the caller",
+            self.session_id,
+        )
+        await self._speak(INTERRUPTION_RECOVERY_LINE)
+        self._start_silence_timer()
 
     async def buffer_transcript(self, transcript: str) -> None:
         if self.call_ending or self.should_end_call:
@@ -1002,6 +1058,8 @@ class CallHandler:
             return
         self.has_user_input = True
         self._cancel_silence_timer()
+        # The caller did say something usable, so the interruption rescue is not needed.
+        self._cancel_interruption_recovery()
         if not self.greeting_in_progress and self._should_bargein(cleaned):
             await self._interrupt_playback()
 
@@ -1016,6 +1074,15 @@ class CallHandler:
                 await self.process_buffer()
 
     async def finalize_call(self, session_id: Optional[str] = None, status: str = "completed", reason: Optional[str] = None) -> dict:
+        # Record the counter the handler measured. The post-call analysis was being asked
+        # to infer interruptions from a transcript, which carries no timing, so it always
+        # came back as zero.
+        try:
+            sid = session_id or self.session_id
+            if sid:
+                await self.db.update_session(sid, interruption_count=self.interruption_count)
+        except Exception as exc:
+            logger.debug("Could not persist interruption_count: %s", exc)
         target_session = session_id or self.session_id
         if target_session:
             await self.db.finalize_session(target_session, status=status, reason=reason)
@@ -1032,8 +1099,20 @@ class CallHandler:
             self.transcript_buffer = ""
             if not user_input:
                 return
-            if self.interrupted_mid_speech and self._last_spoken_text:
-                user_input = f"[Previous response was interrupted] {user_input}"
+            if self.interrupted_mid_speech:
+                # "[interrupted]" alone told the model nothing: it could not tell whether
+                # the caller had heard the whole point or none of it, so it either repeated
+                # itself or silently dropped what it had been about to say.
+                if self._interrupted_text:
+                    user_input = (
+                        f'[You were cut off while saying: "{self._interrupted_text[:140]}". '
+                        f"The caller heard only the start of it. Do not repeat it word for "
+                        f"word. Reply to what they just said:] {user_input}"
+                    )
+                else:
+                    user_input = f"[The caller interrupted you.] {user_input}"
+                self.interrupted_mid_speech = False
+                self._interrupted_text = ""
             # Fire-and-forget: the caller should not wait on MongoDB before hearing a
             # reply. Ordering still holds because each write is independent.
             asyncio.create_task(self.db.mark_session_state(self.session_id, "active"))
