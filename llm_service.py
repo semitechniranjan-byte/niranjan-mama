@@ -161,6 +161,26 @@ class GroqLLMService:
         if not self.ready or self.client is None:
             raise RuntimeError("Groq credentials are not configured")
 
+    async def warm_up(self) -> None:
+        """Open the HTTPS connection to the provider before the first real turn.
+
+        The first completion of a call measured ~1.8s against ~0.5s for every one after
+        it; the difference is the TLS handshake and connection setup, paid while the
+        caller waits. Doing it during the greeting hides it completely.
+
+        This is a bare connection check, not a completion, so it consumes no tokens and
+        no request quota. Failure is ignored - it is only an optimisation.
+        """
+        if self.client is None:
+            return
+        try:
+            http_client = getattr(self.client, "_client", None)
+            if http_client is None:
+                return
+            await http_client.get(str(self.client.base_url), timeout=5.0)
+        except Exception as exc:
+            logger.debug("LLM warm-up skipped: %s", exc)
+
     async def get_conversation_history(self) -> List[Dict[str, str]]:
         if not self.db_service or not self.session_id:
             return []

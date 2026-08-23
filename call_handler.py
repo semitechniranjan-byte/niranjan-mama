@@ -298,18 +298,40 @@ class CallHandler:
         self._speech_frames = 0
         self._silence_frames = 0
         self._speech_started = False
+        # Greet first. Opening the Deepgram socket is a TLS handshake worth hundreds of
+        # milliseconds, and awaiting it here held the greeting back - the caller answered
+        # and heard silence. Nothing can be transcribed until they have been greeted
+        # anyway, so the two happen concurrently.
+        if not self.initial_greeting_sent:
+            asyncio.create_task(self.initial_greeting(self.greeting_text))
+
+        # Pay the LLM's connection setup while the greeting is playing rather than on the
+        # caller's first question.
+        asyncio.create_task(self.llm.warm_up())
+
         if settings.STT_STREAMING:
-            # Opened per call so it carries this stream's negotiated sample rate.
+            # Per call, so it carries this stream's negotiated sample rate.
             self.stt_stream = DeepgramStreamingSTT(
                 sample_rate=self.stream_sample_rate,
                 encoding="linear16",
                 language=self.stt.language,
             )
-            if not await self.stt_stream.connect(self._on_stream_transcript):
-                self.stt_stream = None
+            asyncio.create_task(self._connect_stt_stream())
 
-        if not self.initial_greeting_sent:
-            asyncio.create_task(self.initial_greeting(self.greeting_text))
+    async def _connect_stt_stream(self) -> None:
+        """Bring up live transcription in the background; fall back to batch if it fails."""
+        stream = self.stt_stream
+        if stream is None:
+            return
+        t0 = time.monotonic()
+        ok = await stream.connect(self._on_stream_transcript)
+        logger.warning(
+            "STT-STREAM [%s] connect %s in %sms",
+            self.session_id, "ok" if ok else "FAILED (batch path)",
+            int((time.monotonic() - t0) * 1000),
+        )
+        if not ok and self.stt_stream is stream:
+            self.stt_stream = None
 
     async def detach_stream(self) -> None:
         self.ws = None
