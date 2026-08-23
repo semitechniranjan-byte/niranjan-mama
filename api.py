@@ -1020,8 +1020,10 @@ DEFAULT_APP_SETTINGS = {
     "tts_model_id": settings.CARTESIA_MODEL_ID,
     "tts_voice_id": settings.CARTESIA_VOICE_ID,
     "default_language": "hindi",
-    "silence_first_seconds": 8,
-    "silence_second_seconds": 8,
+    # 8+8 hung up 16s after the last completed turn - too short for someone
+    # working out a payment date. 12+12 gives them room without stalling.
+    "silence_first_seconds": 12,
+    "silence_second_seconds": 12,
     "max_call_seconds": 150,
 }
 

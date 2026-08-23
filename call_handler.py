@@ -77,6 +77,11 @@ NOISE_TRANSCRIPTS = {
 # reply takes, but far below the 27s seen when the free LLM tier throttles.
 LLM_TURN_TIMEOUT_SECONDS = 7.0
 
+# Spoken when the line goes quiet. Both were English, which is jarring on a Hindi
+# call, and the nudge defaulted to the greeting so the bot re-asked the caller's name.
+SILENCE_NUDGE = "Hello, aap sun rahe hain?"
+SILENCE_GOODBYE = "Koi jawab nahi mila. Hum aapko baad mein call karenge, aapka din shubh rahe, bye!"
+
 # One 20ms frame of outbound audio: 160 samples of 16-bit 8kHz PCM.
 OUT_FRAME_BYTES = 320
 
@@ -116,8 +121,9 @@ class CallHandler:
         self.silence_timer = None
         self.silence_prompt_given = False
         self.first_silence_msg = None
-        self.first_silence_time = 8
-        self.second_silence_time = 8
+        self._caller_speaking = False
+        self.first_silence_time = 12
+        self.second_silence_time = 12
         self.call_end_delay = 2
         self.interrupted_mid_speech = False
         self._last_spoken_text = ""
@@ -210,7 +216,9 @@ class CallHandler:
         self.greeting_text = format_prompt_with_placeholders(
             greeting_text or self.greeting_text, self.format_values, logger
         )
-        self.first_silence_msg = self.first_silence_msg or self.greeting_text
+        # Never the greeting: re-asking "kya main <name> se baat kar rahi hoon?" after
+        # the caller already answered sounds like the bot lost the thread.
+        self.first_silence_msg = self.first_silence_msg or SILENCE_NUDGE
         if self.session_id:
             await self.db.mark_session_state(self.session_id, "active", greeting_text=self.greeting_text)
         # Reset per-call state: one shared CallHandler serves sequential calls, so a
@@ -470,6 +478,16 @@ class CallHandler:
                 self._speech_threshold, self.stream_provider,
             )
             self._level_peak = 0.0
+
+        # Someone who is mid-sentence is not silent. Previously only a completed turn
+        # restarted the clock, so a caller thinking aloud - or any transcript dropped as
+        # noise - counted as silence and the call was hung up underneath them.
+        if is_speech and not self._caller_speaking:
+            self._caller_speaking = True
+            self.silence_prompt_given = False
+            self._start_silence_timer()
+        elif not is_speech:
+            self._caller_speaking = False
 
         streaming = self.stt_stream is not None and self.stt_stream.connected
         if streaming:
@@ -796,12 +814,12 @@ class CallHandler:
         if not self.silence_prompt_given:
             self.silence_prompt_given = True
             logger.info("Silence detected, playing follow-up prompt")
-            await self._speak(self.first_silence_msg or "Are you still there?")
+            await self._speak(self.first_silence_msg or SILENCE_NUDGE)
         else:
             self.should_end_call = True
             self.call_ending = True
             logger.info("Silence timeout reached, ending the call")
-            await self._speak("I have not received a response. I will disconnect the call now.")
+            await self._speak(SILENCE_GOODBYE)
             await asyncio.sleep(self.call_end_delay)
             await self._hangup_active_call()
 
