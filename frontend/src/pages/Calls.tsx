@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { IconHistory, IconPhone, IconTrash, IconUser } from "../components/Icons";
-import { DispositionBadge } from "../components/Disposition";
+import { DispositionBadge, maskPhone } from "../components/Disposition";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createOutboundCall, getDispositions, listSessions, listTemplates } from "../api/endpoints";
 import type { Template } from "../api/types";
@@ -362,7 +362,7 @@ export function Calls() {
               <div key={h.id} className="rounded-xl border border-slate-200 p-3 transition hover:border-slate-300">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm text-slate-800">{h.phone}</span>
+                    <span className="font-mono text-sm text-slate-800" title="Number hidden on shared screens">{maskPhone(h.phone)}</span>
                     {h.status === "success" ? (
                       live ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">

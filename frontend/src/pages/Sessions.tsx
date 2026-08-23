@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { DispositionBadge } from "../components/Disposition";
+import { DispositionBadge, maskPhone } from "../components/Disposition";
 import { getDispositions, listSessions } from "../api/endpoints";
 
 export function Sessions() {
@@ -84,7 +84,7 @@ export function Sessions() {
                     {s.session_id}
                   </Link>
                 </td>
-                <td className="px-4 py-2 text-slate-600">{s.phone_number || "-"}</td>
+                <td className="px-4 py-2 font-mono text-slate-600">{maskPhone(s.phone_number)}</td>
                 <td className="px-4 py-2 text-slate-600">{s.direction}</td>
                 <td className="px-4 py-2">
                   <span

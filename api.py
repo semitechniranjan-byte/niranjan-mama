@@ -439,6 +439,9 @@ async def create_outbound_call(payload: OutboundCallRequest) -> dict:
     if resolved:
         call.tts.set_voice(resolved["tts_voice_id"], resolved["tts_model_id"], resolved["tts_language"])
         call.stt.set_language(resolved["stt_language"])
+        # Without this a test call finished with no disposition at all: the scoring prompt
+        # lives on the template and was only ever read by the campaign runner.
+        call.analysis_prompt = resolved.get("analysis_prompt") or None
 
     result = await call.handle_outbound_call(
         payload.to_number,
@@ -642,6 +645,17 @@ async def webhook(request: Request) -> PlainTextResponse:
 
     session_id = request.query_params.get("session_id") or data.get("session_id")
     if not session_id:
+        # A genuine telephony webhook always identifies its call. Anything else hitting
+        # this URL - and it is a public endpoint, so scanners find it - was creating an
+        # "unknown" inbound session, and those junk rows were being scored and counted as
+        # real calls on the dashboard.
+        call_ref = data.get("CallSid") or data.get("CallUUID") or data.get("call_uuid")
+        if not call_ref:
+            logger.info("Ignoring /webhook with no session_id and no call id")
+            return PlainTextResponse(
+                content='<?xml version="1.0" encoding="UTF-8"?><Response/>',
+                media_type="application/xml",
+            )
         session_doc = await handler.db.create_session("unknown", direction="inbound")
         session_id = session_doc["session_id"]
     await handler.db.mark_session_state(session_id, "active", source="webhook", call_uuid=data.get("CallSid") or data.get("CallUUID") or data.get("call_uuid"))

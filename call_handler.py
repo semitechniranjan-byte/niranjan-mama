@@ -182,6 +182,9 @@ class CallHandler:
         # reply can carry on instead of repeating it.
         self._interrupted_text = ""
         self._recovery_timer = None
+        # Set alongside the system prompt when a call is configured, so the same
+        # scoring runs whether the call came from a campaign or the Test Call page.
+        self.analysis_prompt: Optional[str] = None
 
     async def apply_prompt_config(
         self,
@@ -1086,7 +1089,44 @@ class CallHandler:
         target_session = session_id or self.session_id
         if target_session:
             await self.db.finalize_session(target_session, status=status, reason=reason)
+            # Analysis used to run only inside campaign_service, so a single test call was
+            # never scored and its outcome stayed "pending" forever - which hid the one
+            # thing the product exists to produce. Run it for every call, in the background
+            # so hanging up is not delayed by an LLM round trip.
+            asyncio.create_task(self._analyse_completed_call(target_session))
         return {"session_id": target_session, "status": status, "reason": reason}
+
+    async def _analyse_completed_call(self, session_id: str) -> None:
+        """Score a finished call and record its disposition on the session."""
+        try:
+            history = await self.db.get_conversation_history(session_id)
+            if not history:
+                # Nobody spoke: there is nothing to analyse, but the outcome is still known.
+                await self.db.update_session(session_id, disposition_code="NR")
+                return
+
+            analysis_prompt = self.analysis_prompt
+            if not analysis_prompt or not self.llm.ready:
+                logger.info("ANALYSIS [%s] skipped: no prompt or LLM unavailable", session_id)
+                return
+
+            try:
+                from .campaign_service import _run_post_call_analysis
+            except ImportError:  # pragma: no cover
+                from campaign_service import _run_post_call_analysis
+
+            result = await _run_post_call_analysis(self, session_id, analysis_prompt)
+            if not result:
+                return
+
+            code = str(result.get("disposition_code") or "").upper() or None
+            await self.db.update_model_data(session_id, result)
+            # Also store it at the top level. It was only ever nested inside model_data,
+            # so every list view had to dig for it and the session API never exposed it.
+            await self.db.update_session(session_id, disposition_code=code)
+            logger.warning("ANALYSIS [%s] disposition=%s", session_id, code)
+        except Exception as exc:
+            logger.warning("ANALYSIS [%s] failed: %s", session_id, exc)
 
     async def process_buffer(self) -> None:
         if self.call_ending or self.should_end_call or self.greeting_in_progress:

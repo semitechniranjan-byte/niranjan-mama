@@ -209,105 +209,111 @@ async def _run_one_row(
         await db.shift_campaign_stat(campaign_id, "queued", "failed")
         return
 
-    async with semaphore:
-        # A fresh handler per call keeps session/audio state isolated; the Mongo client is
-        # shared so concurrency does not multiply connections.
-        handler = CallHandler(db=db)
-        handler.llm.set_provider(llm_provider)
-        handler.llm.set_model(llm_model)
-        session_id = None
-        try:
-            await db.update_datasheet_row(datasheet_id, row_index, status="calling")
-            await db.shift_campaign_stat(campaign_id, "queued", "calling")
-
-            cfg = resolve_template_config(
-                template, row_data, language=campaign_language, use_case=campaign_use_case
-            )
-            transformed_data = apply_format_value_transforms(template, row_data)
-            handler.tts.set_voice(cfg["tts_voice_id"], cfg["tts_model_id"], cfg["tts_language"])
-            handler.stt.set_language(cfg["stt_language"])
-
+    # Two limits, deliberately separate: the agent semaphore is the business rule for
+    # this pool; the global one is what the host and the LLM tier can actually survive.
+    # A campaign configured for 500 concurrent calls would otherwise dial 500 at once
+    # and degrade every one of them at the same time.
+    async with call_registry.global_call_semaphore():
+        async with semaphore:
+            # A fresh handler per call keeps session/audio state isolated; the Mongo client is
+            # shared so concurrency does not multiply connections.
+            handler = CallHandler(db=db)
+            handler.llm.set_provider(llm_provider)
+            handler.llm.set_model(llm_model)
+            handler.analysis_prompt = analysis_prompt
+            session_id = None
             try:
-                result = await handler.handle_outbound_call(
-                    to_number=phone,
-                    from_number=from_number,
-                    system_prompt=cfg["system_prompt"],
-                    format_values=transformed_data,
-                    dynamic_fields=template.get("dynamic_fields", {}),
-                    greeting_text=cfg["greeting_text"],
-                    execution_id=execution_id,
-                    provider=provider,
-                )
-            except Exception as exc:
-                logger.warning("Campaign %s: call to %s failed: %s", campaign_id, phone, exc)
-                await db.update_datasheet_row(
-                    datasheet_id, row_index, status="failed", disposition_code="ERROR"
-                )
-                await db.shift_campaign_stat(campaign_id, "calling", "failed")
-                return
+                await db.update_datasheet_row(datasheet_id, row_index, status="calling")
+                await db.shift_campaign_stat(campaign_id, "queued", "calling")
 
-            session_id = result.get("session_id")
-            await db.update_datasheet_row(
-                datasheet_id,
-                row_index,
-                session_id=session_id,
-                language=cfg.get("language"),
-                use_case=cfg.get("use_case"),
-                agent_name=agent_name,
-            )
-            if session_id:
-                await call_registry.register_call(session_id, handler)
-                await db.mark_session_state(
-                    session_id,
-                    "active",
-                    campaign_id=campaign_id,
-                    datasheet_id=datasheet_id,
-                    row_index=row_index,
+                cfg = resolve_template_config(
+                    template, row_data, language=campaign_language, use_case=campaign_use_case
+                )
+                transformed_data = apply_format_value_transforms(template, row_data)
+                handler.tts.set_voice(cfg["tts_voice_id"], cfg["tts_model_id"], cfg["tts_language"])
+                handler.stt.set_language(cfg["stt_language"])
+
+                try:
+                    result = await handler.handle_outbound_call(
+                        to_number=phone,
+                        from_number=from_number,
+                        system_prompt=cfg["system_prompt"],
+                        format_values=transformed_data,
+                        dynamic_fields=template.get("dynamic_fields", {}),
+                        greeting_text=cfg["greeting_text"],
+                        execution_id=execution_id,
+                        provider=provider,
+                    )
+                except Exception as exc:
+                    logger.warning("Campaign %s: call to %s failed: %s", campaign_id, phone, exc)
+                    await db.update_datasheet_row(
+                        datasheet_id, row_index, status="failed", disposition_code="ERROR"
+                    )
+                    await db.shift_campaign_stat(campaign_id, "calling", "failed")
+                    return
+
+                session_id = result.get("session_id")
+                await db.update_datasheet_row(
+                    datasheet_id,
+                    row_index,
+                    session_id=session_id,
                     language=cfg.get("language"),
                     use_case=cfg.get("use_case"),
-                    agent_id=agent_id,
                     agent_name=agent_name,
                 )
-
-            telephony_ok = result.get("mode") == "offline" or (
-                result.get("mode") == "telephony"
-                and result.get("telephony_response", {}).get("status") == "success"
-            )
-
-            if telephony_ok and result.get("mode") == "telephony":
-                await _wait_for_session_end(db, session_id, timeout=max_call_seconds)
-                # Enforce the duration cap: a call still live at the cap is hung up.
-                session = await db.get_session(session_id) if session_id else None
-                if session and session.get("active"):
-                    logger.info(
-                        "Campaign %s row %s hit the %ss duration cap; ending call",
-                        campaign_id,
-                        row_index,
-                        max_call_seconds,
+                if session_id:
+                    await call_registry.register_call(session_id, handler)
+                    await db.mark_session_state(
+                        session_id,
+                        "active",
+                        campaign_id=campaign_id,
+                        datasheet_id=datasheet_id,
+                        row_index=row_index,
+                        language=cfg.get("language"),
+                        use_case=cfg.get("use_case"),
+                        agent_id=agent_id,
+                        agent_name=agent_name,
                     )
-                    try:
-                        await handler.hangup_for_duration_cap()
-                    except Exception as exc:
-                        logger.warning("Duration-cap hangup failed for %s: %s", session_id, exc)
-            elif not telephony_ok:
-                await handler.finalize_call(session_id, status="failed", reason="telephony_rejected")
 
-            await _finalize_row_from_session(
-                handler, datasheet_id, row_index, session_id if telephony_ok else None, cfg["analysis_prompt"]
-            )
+                telephony_ok = result.get("mode") == "offline" or (
+                    result.get("mode") == "telephony"
+                    and result.get("telephony_response", {}).get("status") == "success"
+                )
 
-            if update_columns_mapping:
-                session_doc = await db.get_session(session_id) if session_id else None
-                mapped_updates = apply_update_columns_mapping(session_doc, update_columns_mapping)
-                if mapped_updates:
-                    await db.update_datasheet_row(datasheet_id, row_index, **mapped_updates)
+                if telephony_ok and result.get("mode") == "telephony":
+                    await _wait_for_session_end(db, session_id, timeout=max_call_seconds)
+                    # Enforce the duration cap: a call still live at the cap is hung up.
+                    session = await db.get_session(session_id) if session_id else None
+                    if session and session.get("active"):
+                        logger.info(
+                            "Campaign %s row %s hit the %ss duration cap; ending call",
+                            campaign_id,
+                            row_index,
+                            max_call_seconds,
+                        )
+                        try:
+                            await handler.hangup_for_duration_cap()
+                        except Exception as exc:
+                            logger.warning("Duration-cap hangup failed for %s: %s", session_id, exc)
+                elif not telephony_ok:
+                    await handler.finalize_call(session_id, status="failed", reason="telephony_rejected")
 
-            refreshed_row = await db.get_datasheet_row(datasheet_id, row_index)
-            final_status = (refreshed_row or {}).get("status") or "failed"
-            await db.shift_campaign_stat(campaign_id, "calling", final_status)
-        finally:
-            if session_id:
-                await call_registry.unregister_call(session_id)
+                await _finalize_row_from_session(
+                    handler, datasheet_id, row_index, session_id if telephony_ok else None, cfg["analysis_prompt"]
+                )
+
+                if update_columns_mapping:
+                    session_doc = await db.get_session(session_id) if session_id else None
+                    mapped_updates = apply_update_columns_mapping(session_doc, update_columns_mapping)
+                    if mapped_updates:
+                        await db.update_datasheet_row(datasheet_id, row_index, **mapped_updates)
+
+                refreshed_row = await db.get_datasheet_row(datasheet_id, row_index)
+                final_status = (refreshed_row or {}).get("status") or "failed"
+                await db.shift_campaign_stat(campaign_id, "calling", final_status)
+            finally:
+                if session_id:
+                    await call_registry.unregister_call(session_id)
 
 
 async def run_campaign(shared_handler, campaign_id: str) -> None:

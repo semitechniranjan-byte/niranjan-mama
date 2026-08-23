@@ -71,6 +71,13 @@ class Settings:
     # is fed elsewhere, so no resampling or codec conversion is needed.
     VOBIZ_STREAM_CONTENT_TYPE: str = os.getenv("VOBIZ_STREAM_CONTENT_TYPE", "audio/x-l16;rate=8000")
 
+    # Hard ceiling on simultaneous live calls, whatever the agents are configured for.
+    # Agent capacity describes what a pool is *allowed* to do; this describes what the
+    # host and the LLM tier can actually survive. Five concurrent calls is roughly where
+    # Gemini's free 15 rpm and a 0.5 CPU instance both top out - raise it only after
+    # moving to a paid LLM tier and a bigger instance.
+    MAX_CONCURRENT_CALLS: int = int(os.getenv("MAX_CONCURRENT_CALLS", "5"))
+
     API_KEY: str = os.getenv("API_KEY", "dev-key")
 
 

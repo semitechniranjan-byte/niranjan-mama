@@ -10,6 +10,11 @@ one call at a time (or all at once).
 """
 
 import asyncio
+
+try:
+    from .config import settings
+except ImportError:  # pragma: no cover
+    from config import settings
 import logging
 from typing import Dict, Optional
 
@@ -83,3 +88,22 @@ def agent_active_count(agent_id: str) -> int:
     if semaphore is None:
         return 0
     return max(0, _agent_capacity.get(agent_id, DEFAULT_AGENT_CAPACITY) - semaphore._value)
+
+# ---------------------------------------------------------------------------
+# Global concurrency ceiling
+#
+# Agent capacity is a business setting - "this pool may run 100 calls". It says nothing
+# about whether the host can decode 100 audio streams or whether the LLM tier will answer
+# 250 requests a minute. Without a ceiling, launching a large datasheet dials everything
+# at once and every call degrades together: the LLM throttles, the event loop starves, and
+# a batch that would have completed slowly instead completes badly.
+# ---------------------------------------------------------------------------
+_global_semaphore: Optional[asyncio.Semaphore] = None
+
+
+def global_call_semaphore() -> asyncio.Semaphore:
+    """One process-wide limit on simultaneously live calls."""
+    global _global_semaphore
+    if _global_semaphore is None:
+        _global_semaphore = asyncio.Semaphore(max(1, settings.MAX_CONCURRENT_CALLS))
+    return _global_semaphore

@@ -142,3 +142,19 @@ export function DispositionCard({
     </div>
   );
 }
+
+/**
+ * Mask a phone number for display: country code, then the last three digits.
+ *
+ * Operator screens are shown in meetings and over screen shares, and a full list of
+ * debtor numbers is not something to leave on a projector.
+ */
+export function maskPhone(value?: string | null): string {
+  if (!value) return "-";
+  const digits = value.replace(/[^\d]/g, "");
+  if (digits.length < 5) return value;
+  const cc = value.trim().startsWith("+") ? `+${digits.slice(0, digits.length - 10)}` : "";
+  const last = digits.slice(-3);
+  const hidden = "•".repeat(6);
+  return `${cc} ${hidden} ${last}`.trim();
+}
