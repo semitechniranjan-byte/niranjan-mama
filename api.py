@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import traceback
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, File, Form
@@ -526,13 +527,42 @@ async def create_call(payload: CallRequest) -> dict:
 
 
 @app.get("/sessions")
-async def list_sessions() -> dict:
+async def list_sessions(
+    limit: int = 50,
+    skip: int = 0,
+    status: Optional[str] = None,
+    direction: Optional[str] = None,
+    search: Optional[str] = None,
+) -> dict:
+    """One page of sessions, newest first.
+
+    This used to stream every session in the collection to the browser, which is fine at
+    a hundred calls and fatal at a hundred thousand: the whole result set is built in
+    memory, serialised, and then rendered as one row per document. Filtering happens in
+    the query rather than in the client so a search does not depend on having downloaded
+    everything first.
+    """
+    query: Dict[str, Any] = {}
+    if status and status != "all":
+        query["status"] = status
+    if direction and direction != "all":
+        query["direction"] = direction
+    if search:
+        # Anchored so the index can be used; a leading-wildcard scan defeats the point.
+        safe = re.escape(search.strip())
+        query["$or"] = [
+            {"phone_number": {"$regex": safe}},
+            {"session_id": {"$regex": safe}},
+        ]
+
+    limit = max(1, min(limit, 200))
+    total = await handler.db.sessions.count_documents(query)
+    cursor = handler.db.sessions.find(query).sort("created_at", -1).skip(max(0, skip)).limit(limit)
     sessions = []
-    cursor = handler.db.sessions.find().sort("created_at", -1)
     async for doc in cursor:
         doc["_id"] = str(doc.get("_id"))
         sessions.append(doc)
-    return {"sessions": sessions}
+    return {"sessions": sessions, "total": total, "limit": limit, "skip": skip}
 
 
 @app.get("/sessions/{session_id}")

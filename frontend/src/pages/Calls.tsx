@@ -202,14 +202,15 @@ export function Calls() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <Card Icon={IconPhone} title="Call Configuration">
-          <label className="block text-xs font-medium text-slate-600">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="block text-xs font-medium text-slate-600 lg:col-span-2">
             Phone Number <span className="text-red-500">*</span>
             {/* +91 is fixed rather than typed: it was the commonest way to get a call
                 rejected. Digits are hidden by default because this screen gets shown in
                 meetings, with a toggle for when the operator needs to check the number. */}
-            <div className="mt-1.5 flex items-stretch overflow-hidden rounded-lg border border-slate-300 transition focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
-              <span className="flex select-none items-center gap-1.5 border-r border-slate-200 bg-slate-50 px-3 text-sm font-medium text-slate-600">
-                <IconPhone size={14} />
+            <div className="mt-1 flex h-9 items-stretch overflow-hidden rounded-lg border border-slate-300 transition focus-within:border-indigo-400 focus-within:ring-2 focus-within:ring-indigo-100">
+              <span className="flex select-none items-center gap-1 border-r border-slate-200 bg-slate-50 px-2.5 text-sm font-medium text-slate-600">
+                <IconPhone size={13} />
                 +91
               </span>
               <input
@@ -219,13 +220,13 @@ export function Calls() {
                 inputMode="numeric"
                 autoComplete="off"
                 placeholder="10 digit number"
-                className="min-w-0 flex-1 px-3 py-2 font-mono text-sm tracking-wide outline-none"
+                className="min-w-0 flex-1 px-2.5 font-mono text-sm tracking-wide outline-none"
               />
               <button
                 type="button"
                 onClick={() => setShowNumber((v) => !v)}
                 title={showNumber ? "Hide number" : "Show number"}
-                className="flex items-center px-3 text-slate-400 transition hover:text-indigo-600"
+                className="flex items-center px-2.5 text-slate-400 transition hover:text-indigo-600"
               >
                 <IconEye size={15} />
               </button>
@@ -237,7 +238,6 @@ export function Calls() {
             )}
           </label>
 
-          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <label className="block text-xs font-medium text-slate-600">
               Use case <span className="text-red-500">*</span>
               <select
@@ -246,7 +246,7 @@ export function Calls() {
                   setUseCase(e.target.value);
                   setLanguage("");
                 }}
-                className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
               >
                 {useCaseKeys.length === 0 && <option value="">No use cases configured</option>}
                 {useCaseKeys.map((k) => (
@@ -262,7 +262,7 @@ export function Calls() {
               <select
                 value={effectiveLanguage}
                 onChange={(e) => setLanguage(e.target.value)}
-                className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
               >
                 {languages.length === 0 && <option value="">No languages configured</option>}
                 {languages.map((l) => (
@@ -308,7 +308,7 @@ export function Calls() {
                     value={f.key}
                     onChange={(e) => setField(idx, { key: e.target.value })}
                     placeholder="CUSTOMER_NAME"
-                    className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                   />
                 </label>
                 <label className="flex-1 text-xs font-medium text-slate-600">
@@ -317,7 +317,7 @@ export function Calls() {
                     value={f.value}
                     onChange={(e) => setField(idx, { value: e.target.value })}
                     placeholder="Niraj"
-                    className="mt-1.5 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                    className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                   />
                 </label>
                 <button

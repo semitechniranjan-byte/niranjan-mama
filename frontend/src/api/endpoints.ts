@@ -32,8 +32,23 @@ export const getConfig = () => api.get<AppConfig>("/config").then((r) => r.data)
 export const getLogs = () =>
   api.get<string>("/logs", { responseType: "text" }).then((r) => r.data);
 
+export type SessionPage = { sessions: Session[]; total: number; limit: number; skip: number };
+
+/**
+ * One page of sessions. The unpaged version pulled the entire collection into the
+ * browser, which stops being viable well before a client's real call volume.
+ */
+export const listSessionPage = (params: {
+  limit?: number;
+  skip?: number;
+  status?: string;
+  direction?: string;
+  search?: string;
+}) => api.get<SessionPage>("/sessions", { params }).then((r) => r.data);
+
+/** Small recent slice, for dashboard summaries that do not need the whole history. */
 export const listSessions = () =>
-  api.get<{ sessions: Session[] }>("/sessions").then((r) => r.data.sessions);
+  api.get<SessionPage>("/sessions", { params: { limit: 200 } }).then((r) => r.data.sessions);
 export const getSession = (id: string) =>
   api.get<{ session: Session }>(`/sessions/${id}`).then((r) => r.data.session);
 export const getSessionMessages = (id: string) =>

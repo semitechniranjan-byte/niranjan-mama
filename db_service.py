@@ -37,6 +37,10 @@ class DatabaseService:
         try:
             await self.client.admin.command("ping")
             await self.sessions.create_index("session_id", unique=True)
+            # Every session list sorts by created_at and most filter by status. Without
+            # these the paginated list scans the whole collection on each page.
+            await self.sessions.create_index([("created_at", -1)])
+            await self.sessions.create_index([("status", 1), ("created_at", -1)])
             await self.conversations.create_index([("session_id", 1), ("timestamp", 1)])
             await self.executions.create_index("created_at")
             await self.queuecalls.create_index("status")
