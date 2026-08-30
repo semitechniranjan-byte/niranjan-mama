@@ -37,6 +37,9 @@ class Settings:
     # throttle in short bursts, and a second attempt on a different provider lands far
     # more often than a longer wait on the first would.
     LLM_BACKUP_PROVIDER: str = os.getenv("LLM_BACKUP_PROVIDER", "groq")
+    # Naming a model lets the backup sit on the same provider as the primary, so a
+    # single-vendor deployment still gets a second attempt when one request stalls.
+    LLM_BACKUP_MODEL: str = os.getenv("LLM_BACKUP_MODEL", "")
 
     CEREBRAS_API_KEY: str = os.getenv("CEREBRAS_API_KEY", "")
     CEREBRAS_MODEL: str = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")

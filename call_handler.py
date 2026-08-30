@@ -1203,22 +1203,33 @@ class CallHandler:
         return None
 
     def _backup_llm(self) -> Optional[GroqLLMService]:
-        """A second client on a different provider, built once per call and only if needed."""
+        """A second client for the hedge, built once per call and only if one is needed."""
         if self._backup is not None:
             return self._backup
         name = (settings.LLM_BACKUP_PROVIDER or "").strip().lower()
-        if not name or name == self.llm.provider:
+        model = (settings.LLM_BACKUP_MODEL or "").strip()
+        if not name:
+            return None
+        # Same provider is allowed when a model is named. Most tail latency is one request
+        # stalling rather than the whole provider being down, so a second request - even to
+        # the same model - covers it, and a deployment that wants a single vendor can stay
+        # on one without giving up the hedge.
+        if name == self.llm.provider and not model:
             return None
         try:
             client = GroqLLMService()
             client.set_provider(name)
             if client.provider != name or not client.ready:
                 return None
+            if model:
+                client.set_model(model)
             client.set_system_prompt(self.system_prompt_template)
             client.set_format_values(self.format_values)
             client.set_dynamic_fields(self.dynamic_fields)
             self._backup = client
-            logger.warning("LLM [%s] backup provider ready: %s", self.session_id, name)
+            logger.warning(
+                "LLM [%s] backup ready: %s/%s", self.session_id, name, client.model,
+            )
             return client
         except Exception as exc:
             logger.info("No backup LLM available: %s", exc)
