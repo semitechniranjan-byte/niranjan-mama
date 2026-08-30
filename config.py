@@ -33,6 +33,11 @@ class Settings:
 
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    # Used only when the primary model times out or returns nothing. The free tiers
+    # throttle in short bursts, and a second attempt on a different provider lands far
+    # more often than a longer wait on the first would.
+    LLM_BACKUP_PROVIDER: str = os.getenv("LLM_BACKUP_PROVIDER", "groq")
+
     CEREBRAS_API_KEY: str = os.getenv("CEREBRAS_API_KEY", "")
     CEREBRAS_MODEL: str = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")
 

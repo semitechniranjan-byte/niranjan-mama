@@ -1461,12 +1461,23 @@ async def vobiz_stream_websocket(websocket: WebSocket) -> None:
     """
     await websocket.accept()
     session_id = websocket.query_params.get("session_id") or ""
-    call: Any = call_registry.get_call(session_id)
+    call: Any = call_registry.get_call(session_id) if session_id else None
     if call is None:
+        active = call_registry.active_count()
+        # Guessing is only safe when there is exactly one call to guess at. With several
+        # live it attached this stream to somebody else's handler, so two callers shared
+        # one conversation. Refuse instead.
+        if active > 1:
+            logger.warning(
+                "Vobiz stream for session %r rejected: %s calls live, cannot guess",
+                session_id, active,
+            )
+            await websocket.close()
+            return
         call = call_registry.only_active_call() or handler
         logger.warning(
             "Vobiz stream for session %r not in registry (%s active); using fallback",
-            session_id, call_registry.active_count(),
+            session_id, active,
         )
     try:
         while True:

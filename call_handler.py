@@ -85,9 +85,30 @@ NOISE_TRANSCRIPTS = {
     "धन्यवाद", "शुक्रिया", "हम्म", "अच्छा", "हाँ", "हां", "नहीं", "ओह", "अरे",
 }
 
+# Network announcements the carrier plays into the call. They transcribe cleanly and at
+# high confidence, so nothing else catches them, and the agent then answers the operator
+# instead of the customer. Matched as substrings because the wording varies by circle.
+CARRIER_ANNOUNCEMENTS = (
+    "hold पर रखा", "line पर बने", "कृपया line",
+    "call को hold", "व्यक्ति से बात कर रहे हैं",
+    "is now being recorded", "call is being recorded",
+    "switched off", "out of coverage", "not reachable",
+    "स्विच ऑफ", "नेटवर्क कवरेज",
+)
+
 # A single turn must never leave the caller in silence. Well above the ~1s a healthy
 # reply takes, but far below the 27s seen when the free LLM tier throttles.
-LLM_TURN_TIMEOUT_SECONDS = 7.0
+# Two shots at a reply rather than one long wait. The free model tier throttles in
+# short bursts, so a second attempt - on a different provider - usually lands where
+# waiting longer on the first would not have.
+LLM_FIRST_TIMEOUT_SECONDS = 4.0
+LLM_BACKUP_TIMEOUT_SECONDS = 3.5
+LLM_TURN_TIMEOUT_SECONDS = 7.0  # kept for the silence path
+
+# Said only when both providers fail. Deliberately does not advance the script: an
+# earlier version asked for a payment date, which skipped the introduction entirely
+# and left the customer wondering who was calling.
+LLM_STALL_LINE = "Ek second, line thodi slow hai."
 
 # Spoken when the line goes quiet. Both were English, which is jarring on a Hindi
 # call, and the nudge defaulted to the greeting so the bot re-asked the caller's name.
@@ -185,6 +206,7 @@ class CallHandler:
         # Set alongside the system prompt when a call is configured, so the same
         # scoring runs whether the call came from a campaign or the Test Call page.
         self.analysis_prompt: Optional[str] = None
+        self._backup: Optional[GroqLLMService] = None
 
     async def apply_prompt_config(
         self,
@@ -240,9 +262,19 @@ class CallHandler:
                 session_doc.get("dynamic_fields", {}),
             )
 
+        # A blank or space-padded name reached the caller as "kya main  se baat kar rahi
+        # hoon?", which sounds broken. Tidy the values before they are substituted, and
+        # fall back to a neutral form when the name is missing entirely.
+        self.format_values = {
+            k: (v.strip() if isinstance(v, str) else v) for k, v in (self.format_values or {}).items()
+        }
+        if not str(self.format_values.get("CUSTOMER_NAME") or "").strip():
+            self.format_values["CUSTOMER_NAME"] = "aap"
         self.greeting_text = format_prompt_with_placeholders(
             greeting_text or self.greeting_text, self.format_values, logger
         )
+        # Collapse any run of spaces the substitution may have left behind.
+        self.greeting_text = re.sub(r"\s{2,}", " ", self.greeting_text).strip()
         # Never the greeting: re-asking "kya main <name> se baat kar rahi hoon?" after
         # the caller already answered sounds like the bot lost the thread.
         self.first_silence_msg = self.first_silence_msg or SILENCE_NUDGE
@@ -674,6 +706,14 @@ class CallHandler:
             await self.buffer_transcript(transcript)
 
     def _is_noise_transcript(self, transcript: str, confidence: float) -> bool:
+        low = (transcript or "").lower()
+        for phrase in CARRIER_ANNOUNCEMENTS:
+            if phrase.lower() in low:
+                logger.warning(
+                    "NOISE [%s] dropped (carrier announcement): %r",
+                    self.session_id, transcript[:70],
+                )
+                return True
         """Reject transcriptions that are almost certainly background noise.
 
         Speech recognition returns *something* for traffic, a TV or crosstalk, usually a
@@ -1096,6 +1136,67 @@ class CallHandler:
             asyncio.create_task(self._analyse_completed_call(target_session))
         return {"session_id": target_session, "status": status, "reason": reason}
 
+    async def _llm_reply(self, user_input: str) -> Optional[str]:
+        """A reply from the primary model, falling back to the backup provider.
+
+        Returns None only if both fail, which is the caller's cue to stall rather than
+        invent something.
+        """
+        history = list(self.conversation)
+
+        try:
+            reply = await asyncio.wait_for(
+                self.llm.generate_response(user_input, conversation_history=history),
+                timeout=LLM_FIRST_TIMEOUT_SECONDS,
+            )
+            if reply and reply.strip():
+                return reply
+            logger.warning("LLM [%s] primary returned nothing; trying backup", self.session_id)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "LLM [%s] primary exceeded %ss; trying backup",
+                self.session_id, LLM_FIRST_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning("LLM [%s] primary failed (%s); trying backup", self.session_id, exc)
+
+        backup = self._backup_llm()
+        if backup is None:
+            return None
+        try:
+            reply = await asyncio.wait_for(
+                backup.generate_response(user_input, conversation_history=history),
+                timeout=LLM_BACKUP_TIMEOUT_SECONDS,
+            )
+            if reply and reply.strip():
+                logger.warning("LLM [%s] answered from backup provider", self.session_id)
+                return reply
+        except Exception as exc:
+            logger.warning("LLM [%s] backup also failed: %s", self.session_id, exc)
+        return None
+
+    def _backup_llm(self) -> Optional[GroqLLMService]:
+        """A second client on a different provider, built once per call and only if needed."""
+        if self._backup is not None:
+            return self._backup
+        name = (settings.LLM_BACKUP_PROVIDER or "").strip().lower()
+        if not name or name == self.llm.provider:
+            return None
+        try:
+            client = GroqLLMService()
+            client.set_provider(name)
+            if client.provider != name or not client.ready:
+                return None
+            client.set_system_prompt(self.system_prompt_template)
+            client.set_format_values(self.format_values)
+            client.set_dynamic_fields(self.dynamic_fields)
+            self._backup = client
+            logger.warning("LLM [%s] backup provider ready: %s", self.session_id, name)
+            return client
+        except Exception as exc:
+            logger.info("No backup LLM available: %s", exc)
+            return None
+
     async def _analyse_completed_call(self, session_id: str) -> None:
         """Score a finished call and record its disposition on the session."""
         try:
@@ -1162,22 +1263,11 @@ class CallHandler:
             logger.warning("LLM [%s] user=%r", self.session_id, user_input[:120])
 
             t_llm = time.monotonic()
-            try:
-                # Observed 27s and 12s replies on the free Gemini tier when it throttles.
-                # A caller will not sit through that, so the turn is capped and answered
-                # with a short holding line instead of dead air.
-                response_text = await asyncio.wait_for(
-                    self.llm.generate_response(
-                        user_input, conversation_history=list(self.conversation)
-                    ),
-                    timeout=LLM_TURN_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "LLM [%s] exceeded %ss, using holding reply",
-                    self.session_id, LLM_TURN_TIMEOUT_SECONDS,
-                )
-                response_text = "Ek minute, main dekh rahi hoon. Aap kab tak payment kar payenge?"
+            response_text = await self._llm_reply(user_input)
+            stalled = response_text is None
+            if stalled:
+                logger.warning("LLM [%s] both providers failed; stalling", self.session_id)
+                response_text = LLM_STALL_LINE
             llm_ms = int((time.monotonic() - t_llm) * 1000)
 
             asyncio.create_task(
