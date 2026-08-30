@@ -73,7 +73,10 @@ VAD_MAX_THRESHOLD = 4000               # never get so strict that a quiet caller
 
 # A transcript is only believed if Deepgram is reasonably sure of it. Noise typically
 # comes back as confident-looking short filler, so length and content are checked too.
-STT_MIN_CONFIDENCE = 0.55
+STT_MIN_CONFIDENCE = 0.5
+# Short filler words are only dropped below this. Kept low deliberately - see the note in
+# _is_noise_transcript; a real one-word answer to the opening question lands around 0.55.
+FILLER_MIN_CONFIDENCE = 0.5
 STT_MIN_CHARS = 2
 
 # Things Deepgram commonly emits for noise, breathing or music. On their own they carry no
@@ -81,8 +84,7 @@ STT_MIN_CHARS = 2
 NOISE_TRANSCRIPTS = {
     "you", "thank you", "thanks", "bye", "okay", "ok", "uh", "um", "hmm", "mm", "mmm",
     "ah", "oh", "eh", "huh", "yeah", "yes", "no", ".", "..", "...", "?", "!",
-    "thank you.", "you.", "bye.", "so", "the", "a", "i", "hi", "hello", "hello.",
-    "हैलो", "हलो",
+    "thank you.", "you.", "bye.", "so", "the", "a", "i", "hi",
     "धन्यवाद", "शुक्रिया", "हम्म", "अच्छा", "हाँ", "हां", "नहीं", "ओह", "अरे",
 }
 
@@ -103,15 +105,18 @@ CARRIER_ANNOUNCEMENTS = (
 # short bursts, so a second attempt - on a different provider - usually lands where
 # waiting longer on the first would not have.
 # Waiting out the primary before even starting the backup put the whole timeout on the
-# caller's ear: a throttled turn cost 4.8s where a healthy one cost 0.76s. The backup is
-# now started while the primary is still running, and the first usable answer wins.
+# caller's ear, so the backup is started while the primary is still running and the first
+# usable answer wins.
 #
-# The window sits above the primary's normal spread, not below it. Measured on the real
-# 2992-character prompt: 941/988/1032/1053/1121/1142/1201/1211/1400/1479ms. At 0.8s the
-# hedge fired on every single turn, doubling the model calls to arrive at the same moment,
-# because a ~1.1s answer is this model working normally rather than stalling. At 1.5s it
-# fires on roughly the slowest tenth, which is what a hedge is for.
-LLM_HEDGE_AFTER_SECONDS = 1.5
+# The window is set from the caller's wait, not from the number of model calls. On the
+# deployment the primary is bimodal - about 600ms when it is quick, past 1.5s when it is
+# not - and a window tuned to sit above its normal spread simply added itself to every
+# slow turn: at 1.5s a slow turn cost the caller 2107ms, where the same turn at 0.8s cost
+# 1676ms. The backup answers in about 500ms whenever it is asked, so starting it early
+# caps the slow turns near a second while a quick primary still wins outright and the
+# backup result is discarded. Hedging this early does mean paying for a second call on
+# most turns, which is a few paise a minute against a second of dead air.
+LLM_HEDGE_AFTER_SECONDS = 0.5
 LLM_TOTAL_DEADLINE_SECONDS = 4.0
 LLM_TURN_TIMEOUT_SECONDS = 7.0  # kept for the silence path
 
@@ -762,7 +767,14 @@ class CallHandler:
             logger.warning("NOISE [%s] dropped (no words): %r", self.session_id, text)
             return True
 
-        if text.lower().strip(" .,!?") in NOISE_TRANSCRIPTS and confidence < 0.9:
+        # This list was the main defence against the recogniser returning a short word for
+        # noise, so it demanded high confidence. The speech-energy gate now does that job
+        # directly and far better, and the high bar had become the bigger problem: a Hindi
+        # model hearing English on an 8kHz line scores a real "Yes"/"Hello" at 0.52-0.65,
+        # so a caller answering the opening question was dropped four times running and the
+        # call carried no turns at all. It stays only as a backstop for genuinely unsure
+        # single words.
+        if text.lower().strip(" .,!?") in NOISE_TRANSCRIPTS and confidence < FILLER_MIN_CONFIDENCE:
             logger.warning(
                 "NOISE [%s] dropped (filler, confidence %.2f): %r", self.session_id, confidence, text
             )

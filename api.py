@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from .analyze_sessions import router as analyze_sessions_router, init_analyze_sessions
-    from .call_handler import CallHandler
+    from .call_handler import CallHandler, LLM_HEDGE_AFTER_SECONDS
     from .config import settings
     from .datasheet_service import parse_datasheet_file, validate_columns
     from .campaign_service import run_campaign
@@ -26,7 +26,7 @@ try:
     from . import call_registry
 except ImportError:  # pragma: no cover
     from analyze_sessions import router as analyze_sessions_router, init_analyze_sessions
-    from call_handler import CallHandler
+    from call_handler import CallHandler, LLM_HEDGE_AFTER_SECONDS
     from config import settings
     from datasheet_service import parse_datasheet_file, validate_columns
     from campaign_service import run_campaign
@@ -163,6 +163,15 @@ def _log_configuration_report() -> None:
         )
     else:
         logger.warning("CONFIG: all required credentials present")
+    # Which models actually loaded, so a secret file that did not take effect is visible
+    # at boot rather than being inferred from a backup line in the middle of a call.
+    logger.warning(
+        "CONFIG: llm primary=%s backup=%s/%s hedge=%.1fs",
+        settings.GEMINI_MODEL or "-",
+        settings.LLM_BACKUP_PROVIDER or "-",
+        settings.LLM_BACKUP_MODEL or "(provider default)",
+        LLM_HEDGE_AFTER_SECONDS,
+    )
 
 
 @app.on_event("startup")
