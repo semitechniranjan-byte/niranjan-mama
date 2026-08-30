@@ -61,6 +61,10 @@ BARGEIN_GRACE_SECONDS = 0.8
 # inviting them to continue.
 INTERRUPTION_RECOVERY_SECONDS = 2.5
 INTERRUPTION_RECOVERY_LINE = "Ji, boliye?"
+# How recently speech must have been heard for the re-invite to hold off, and how many
+# times it may hold off before giving up and speaking anyway.
+RECOVERY_SPEECH_QUIET_SECONDS = 1.2
+RECOVERY_MAX_REARMS = 4
 
 # ---- Background-noise defences -------------------------------------------------------
 # Indian mobile calls are frequently made from traffic, shops and rooms with a TV on. A
@@ -178,6 +182,8 @@ class CallHandler:
         # started talking. A transcript that arrives without it did not come from the
         # caller, whatever the recogniser says it heard.
         self._speech_seen_since_reply = False
+        self._last_speech_at = 0.0
+        self._recovery_rearms = 0
         # Bytes of audio queued for the most recent reply, used to wait out the sign-off.
         self._spoken_bytes = 0
         self._first_audio_ms: Optional[int] = None
@@ -612,6 +618,7 @@ class CallHandler:
         # noise - counted as silence and the call was hung up underneath them.
         if is_speech:
             self._speech_seen_since_reply = True
+            self._last_speech_at = time.monotonic()
 
         if is_speech and not self._caller_speaking:
             self._caller_speaking = True
@@ -1124,6 +1131,21 @@ class CallHandler:
         # Something did arrive and is being handled - nothing to rescue.
         if self.is_processing or self.transcript_buffer.strip() or self.tts.tts_in_progress:
             return
+        # The caller talking is the entire reason we are here, and a sentence takes longer
+        # to say than the recovery window. Re-inviting them mid-sentence talks over the very
+        # answer we interrupted ourselves to hear, and the half of it that survives arrives
+        # as a fragment - "तक कर देंगे?" - which then reads as a bad line and costs another
+        # turn. Wait while the line is still live, but not forever.
+        since_speech = time.monotonic() - self._last_speech_at
+        if since_speech < RECOVERY_SPEECH_QUIET_SECONDS and self._recovery_rearms < RECOVERY_MAX_REARMS:
+            self._recovery_rearms += 1
+            logger.warning(
+                "RECOVERY [%s] caller still speaking (%.1fs ago); waiting (%s/%s)",
+                self.session_id, since_speech, self._recovery_rearms, RECOVERY_MAX_REARMS,
+            )
+            self._arm_interruption_recovery()
+            return
+        self._recovery_rearms = 0
         logger.warning(
             "RECOVERY [%s] interruption produced no usable speech; re-inviting the caller",
             self.session_id,
