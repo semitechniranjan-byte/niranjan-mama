@@ -101,8 +101,12 @@ CARRIER_ANNOUNCEMENTS = (
 # Two shots at a reply rather than one long wait. The free model tier throttles in
 # short bursts, so a second attempt - on a different provider - usually lands where
 # waiting longer on the first would not have.
-LLM_FIRST_TIMEOUT_SECONDS = 4.0
-LLM_BACKUP_TIMEOUT_SECONDS = 3.5
+# Waiting out the primary before even starting the backup put the whole timeout on the
+# caller's ear: a throttled turn cost 4.8s where a healthy one cost 0.76s. The backup is
+# now started while the primary is still running, and the first usable answer wins. The
+# only cost of hedging early is an extra backup call, which is a fraction of a paisa.
+LLM_HEDGE_AFTER_SECONDS = 0.8
+LLM_TOTAL_DEADLINE_SECONDS = 4.0
 LLM_TURN_TIMEOUT_SECONDS = 7.0  # kept for the silence path
 
 # Said only when both providers fail. Deliberately does not advance the script: an
@@ -1137,42 +1141,65 @@ class CallHandler:
         return {"session_id": target_session, "status": status, "reason": reason}
 
     async def _llm_reply(self, user_input: str) -> Optional[str]:
-        """A reply from the primary model, falling back to the backup provider.
+        """A reply from whichever model answers first.
 
-        Returns None only if both fail, which is the caller's cue to stall rather than
-        invent something.
+        The primary starts alone; if it has not answered within the hedge window the
+        backup is started alongside it rather than after it, so a throttled primary costs
+        the hedge window and not the whole deadline. Returns None only if nothing usable
+        arrives in time, which is the caller's cue to stall rather than invent something.
         """
         history = list(self.conversation)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + LLM_TOTAL_DEADLINE_SECONDS
 
-        try:
-            reply = await asyncio.wait_for(
-                self.llm.generate_response(user_input, conversation_history=history),
-                timeout=LLM_FIRST_TIMEOUT_SECONDS,
-            )
-            if reply and reply.strip():
-                return reply
-            logger.warning("LLM [%s] primary returned nothing; trying backup", self.session_id)
-        except asyncio.TimeoutError:
-            logger.warning(
-                "LLM [%s] primary exceeded %ss; trying backup",
-                self.session_id, LLM_FIRST_TIMEOUT_SECONDS,
-            )
-        except Exception as exc:
-            logger.warning("LLM [%s] primary failed (%s); trying backup", self.session_id, exc)
+        async def ask(client, label: str):
+            reply = await client.generate_response(user_input, conversation_history=history)
+            if not (reply and reply.strip()):
+                raise RuntimeError("returned nothing")
+            return label, reply
 
-        backup = self._backup_llm()
-        if backup is None:
-            return None
+        started = loop.time()
+        tasks = {asyncio.ensure_future(ask(self.llm, "primary"))}
+        hedged = False
         try:
-            reply = await asyncio.wait_for(
-                backup.generate_response(user_input, conversation_history=history),
-                timeout=LLM_BACKUP_TIMEOUT_SECONDS,
-            )
-            if reply and reply.strip():
-                logger.warning("LLM [%s] answered from backup provider", self.session_id)
-                return reply
-        except Exception as exc:
-            logger.warning("LLM [%s] backup also failed: %s", self.session_id, exc)
+            while tasks:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                window = remaining if hedged else min(remaining, LLM_HEDGE_AFTER_SECONDS)
+                done, tasks = await asyncio.wait(
+                    tasks, timeout=window, return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in done:
+                    try:
+                        label, reply = task.result()
+                    except Exception as exc:
+                        logger.warning("LLM [%s] %s failed: %s", self.session_id, task, exc)
+                        continue
+                    if label == "backup":
+                        logger.warning(
+                            "LLM [%s] answered from backup provider in %dms",
+                            self.session_id, int((loop.time() - started) * 1000),
+                        )
+                    return reply
+                # Either the hedge window expired or every attempt so far has failed; in
+                # both cases the primary is not going to be quick, so bring in the backup.
+                if not hedged:
+                    hedged = True
+                    backup = self._backup_llm()
+                    if backup is not None:
+                        logger.warning(
+                            "LLM [%s] primary slow past %.1fs; racing the backup",
+                            self.session_id, LLM_HEDGE_AFTER_SECONDS,
+                        )
+                        tasks = set(tasks) | {asyncio.ensure_future(ask(backup, "backup"))}
+        finally:
+            for task in tasks:
+                task.cancel()
+        logger.warning(
+            "LLM [%s] no usable reply within %.1fs",
+            self.session_id, LLM_TOTAL_DEADLINE_SECONDS,
+        )
         return None
 
     def _backup_llm(self) -> Optional[GroqLLMService]:
