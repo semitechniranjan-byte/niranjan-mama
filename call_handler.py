@@ -385,8 +385,14 @@ class CallHandler:
             asyncio.create_task(self.initial_greeting(self.greeting_text))
 
         # Pay the LLM's connection setup while the greeting is playing rather than on the
-        # caller's first question.
+        # caller's first question. The backup needs this as much as the primary: it used to
+        # be built the moment it was first wanted, so its TLS handshake landed inside the
+        # turn it was meant to rescue - 963ms on the first hedge of a call against 467ms on
+        # the next. Building it now costs nothing if it is never used.
         asyncio.create_task(self.llm.warm_up())
+        backup = self._backup_llm()
+        if backup is not None:
+            asyncio.create_task(backup.warm_up())
 
         if settings.STT_STREAMING:
             # Per call, so it carries this stream's negotiated sample rate.
