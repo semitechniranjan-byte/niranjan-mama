@@ -81,7 +81,8 @@ STT_MIN_CHARS = 2
 NOISE_TRANSCRIPTS = {
     "you", "thank you", "thanks", "bye", "okay", "ok", "uh", "um", "hmm", "mm", "mmm",
     "ah", "oh", "eh", "huh", "yeah", "yes", "no", ".", "..", "...", "?", "!",
-    "thank you.", "you.", "bye.", "so", "the", "a", "i", "hi",
+    "thank you.", "you.", "bye.", "so", "the", "a", "i", "hi", "hello", "hello.",
+    "हैलो", "हलो",
     "धन्यवाद", "शुक्रिया", "हम्म", "अच्छा", "हाँ", "हां", "नहीं", "ओह", "अरे",
 }
 
@@ -168,6 +169,10 @@ class CallHandler:
         self.silence_prompt_given = False
         self.first_silence_msg = None
         self._caller_speaking = False
+        # Whether the local VAD has heard actual speech energy since the agent last
+        # started talking. A transcript that arrives without it did not come from the
+        # caller, whatever the recogniser says it heard.
+        self._speech_seen_since_reply = False
         # Bytes of audio queued for the most recent reply, used to wait out the sign-off.
         self._spoken_bytes = 0
         self._first_audio_ms: Optional[int] = None
@@ -429,6 +434,7 @@ class CallHandler:
         # Any speech frames counted while the caller was finishing must not carry over
         # into the reply and trip barge-in immediately.
         self._speech_frames = 0
+        self._speech_seen_since_reply = False
         await self.tts.synthesize(text, callback=self._send_audio_chunk, encoding=encoding, sample_rate=sample_rate)
         await self._flush_output_audio()
 
@@ -593,6 +599,9 @@ class CallHandler:
         # Someone who is mid-sentence is not silent. Previously only a completed turn
         # restarted the clock, so a caller thinking aloud - or any transcript dropped as
         # noise - counted as silence and the call was hung up underneath them.
+        if is_speech:
+            self._speech_seen_since_reply = True
+
         if is_speech and not self._caller_speaking:
             self._caller_speaking = True
             self.silence_prompt_given = False
@@ -665,6 +674,17 @@ class CallHandler:
             self.session_id, transcript, confidence,
         )
         if self.call_ending or self.should_end_call:
+            return
+        # The recogniser will occasionally return a plausible word for a line that carried
+        # no speech at all - "Hello." at 0.69 while the meter read 8 against a threshold of
+        # 400. Taken as the caller's answer it makes the agent reply to nobody and then talk
+        # over them when they do speak. If the microphone never registered speech, this did
+        # not come from the caller.
+        if not self._speech_seen_since_reply:
+            logger.warning(
+                "NOISE [%s] dropped (no speech energy on the line): %r",
+                self.session_id, (transcript or "")[:60],
+            )
             return
         if self._is_noise_transcript(transcript, confidence):
             return
