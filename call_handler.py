@@ -103,9 +103,14 @@ CARRIER_ANNOUNCEMENTS = (
 # waiting longer on the first would not have.
 # Waiting out the primary before even starting the backup put the whole timeout on the
 # caller's ear: a throttled turn cost 4.8s where a healthy one cost 0.76s. The backup is
-# now started while the primary is still running, and the first usable answer wins. The
-# only cost of hedging early is an extra backup call, which is a fraction of a paisa.
-LLM_HEDGE_AFTER_SECONDS = 0.8
+# now started while the primary is still running, and the first usable answer wins.
+#
+# The window sits above the primary's normal spread, not below it. Measured on the real
+# 2992-character prompt: 941/988/1032/1053/1121/1142/1201/1211/1400/1479ms. At 0.8s the
+# hedge fired on every single turn, doubling the model calls to arrive at the same moment,
+# because a ~1.1s answer is this model working normally rather than stalling. At 1.5s it
+# fires on roughly the slowest tenth, which is what a hedge is for.
+LLM_HEDGE_AFTER_SECONDS = 1.5
 LLM_TOTAL_DEADLINE_SECONDS = 4.0
 LLM_TURN_TIMEOUT_SECONDS = 7.0  # kept for the silence path
 
