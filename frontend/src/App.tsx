@@ -8,6 +8,7 @@ import { Sessions } from "./pages/Sessions";
 import { SessionDetail } from "./pages/SessionDetail";
 import { Calls } from "./pages/Calls";
 import { Templates } from "./pages/Templates";
+import { Reports } from "./pages/Reports";
 import { DatasheetTemplates } from "./pages/DatasheetTemplates";
 import { Campaigns } from "./pages/Campaigns";
 import { Agents } from "./pages/Agents";
@@ -97,6 +98,14 @@ function App() {
         element={
           <Protected>
             <Agents />
+          </Protected>
+        }
+      />
+      <Route
+        path="/reports"
+        element={
+          <Protected>
+            <Reports />
           </Protected>
         }
       />

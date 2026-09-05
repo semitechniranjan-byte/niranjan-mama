@@ -5,6 +5,7 @@ import { getHealth } from "../api/endpoints";
 import { useAuth } from "../context/AuthContext";
 import {
   IconChart,
+  IconDownload,
   IconCampaign,
   IconDashboard,
   IconDatabase,
@@ -27,6 +28,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
       { to: "/sessions", label: "Conversations", Icon: IconMessage },
       { to: "/calls", label: "Test Call", Icon: IconPhone },
       { to: "/agents", label: "Agents", Icon: IconUsers },
+      { to: "/reports", label: "Reports", Icon: IconDownload },
       { to: "/analytics", label: "Analytics", Icon: IconChart },
     ],
   },

@@ -118,6 +118,52 @@ export type TemplatePayload = Omit<Template, "_id" | "created_at" | "updated_at"
 
 export const listTemplates = () =>
   api.get<{ templates: Template[] }>("/templates").then((r) => r.data.templates);
+export interface AnalyticsSummary {
+  total: number;
+  scored: number;
+  promises: number;
+  promise_rate: number;
+  by_disposition: { code: string; count: number }[];
+  by_day: { date: string; calls: number; promises: number }[];
+  by_language: { language: string; count: number }[];
+}
+
+export type ReportFilters = {
+  date_from?: string;
+  date_to?: string;
+  disposition?: string;
+  direction?: string;
+  search?: string;
+};
+
+export const getAnalyticsSummary = (params: { date_from?: string; date_to?: string }) =>
+  api.get<AnalyticsSummary>("/analytics/summary", { params }).then((r) => r.data);
+
+/**
+ * Pull the report as a blob and hand it to the browser.
+ *
+ * A plain link would skip the API key the interceptor adds, and would give no way to
+ * report a failure - the user would just get an empty file.
+ */
+export async function downloadCallsCsv(filters: ReportFilters): Promise<number> {
+  const response = await api.get("/reports/calls.csv", {
+    params: filters,
+    responseType: "blob",
+  });
+  const blob = response.data as Blob;
+  const disposition = String(response.headers["content-disposition"] || "");
+  const named = /filename="([^"]+)"/.exec(disposition);
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = named?.[1] || "qsilon-calls.csv";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return blob.size;
+}
+
 /** The {PLACEHOLDER} names a chosen script uses, so a form can offer a box for each. */
 export const getTemplatePlaceholders = (params: {
   template_id?: string;
