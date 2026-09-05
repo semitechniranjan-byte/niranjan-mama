@@ -4,12 +4,14 @@ import hashlib
 import json
 import logging
 import os
+import csv
+import io as _io
 import re
 import secrets
 import traceback
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 from typing import Any, Dict, Optional
 
@@ -77,11 +79,11 @@ USER_TOKEN = hashlib.sha256(f"{settings.API_KEY}:operator".encode()).hexdigest()
 ROLE_PAGES = {
     "admin": [
         "/", "/campaigns", "/sessions", "/calls", "/agents",
-        "/analytics", "/templates", "/datasheets", "/settings",
+        "/analytics", "/reports", "/templates", "/datasheets", "/settings",
     ],
     # Conversations is where transcripts and outcomes live, which is the whole point of
     # the product for a collections operator. Config, prompts and agents stay admin-only.
-    "user": ["/", "/campaigns", "/sessions", "/calls", "/datasheets"],
+    "user": ["/", "/campaigns", "/sessions", "/calls", "/datasheets", "/reports"],
 }
 
 
@@ -1056,6 +1058,173 @@ async def set_dispositions(payload: DispositionsUpdateRequest) -> dict:
     data = [item.model_dump() for item in payload.data]
     await handler.db.set_dispositions(data)
     return {"dispositions": data}
+
+
+def _session_window(date_from: Optional[str], date_to: Optional[str]) -> dict:
+    """A created_at filter built from two optional YYYY-MM-DD strings."""
+    window: dict = {}
+    if date_from:
+        try:
+            window["$gte"] = datetime.strptime(date_from, "%Y-%m-%d")
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            # Inclusive of the whole closing day.
+            window["$lt"] = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+        except ValueError:
+            pass
+    return {"created_at": window} if window else {}
+
+
+def _report_query(
+    date_from: Optional[str], date_to: Optional[str],
+    disposition: Optional[str], direction: Optional[str], search: Optional[str],
+) -> dict:
+    query: dict = dict(_session_window(date_from, date_to))
+    if disposition and disposition != "all":
+        query["disposition_code"] = disposition.upper()
+    if direction and direction != "all":
+        query["direction"] = direction
+    if search:
+        safe = re.escape(search.strip())
+        query["$or"] = [
+            {"phone_number": {"$regex": safe, "$options": "i"}},
+            {"session_id": {"$regex": safe, "$options": "i"}},
+        ]
+    return query
+
+
+def _clean(value: Any) -> str:
+    """The analysis writes the string "None" for an absent field; a report shows blank."""
+    text = str(value if value is not None else "").strip()
+    return "" if text.lower() in ("none", "null", "n/a") else text
+
+
+def _duration_seconds(session: dict) -> int:
+    started = session.get("started_at") or session.get("created_at")
+    ended = session.get("ended_at")
+    if started and ended:
+        return max(0, int((ended - started).total_seconds()))
+    raw = (session.get("call_info") or {}).get("Duration")
+    try:
+        return int(float(raw))
+    except (TypeError, ValueError):
+        return 0
+
+
+# What a collections desk actually reads, in the order they read it.
+REPORT_COLUMNS = [
+    ("Date", lambda s, m, n: s["created_at"].strftime("%Y-%m-%d") if s.get("created_at") else ""),
+    ("Time", lambda s, m, n: s["created_at"].strftime("%H:%M") if s.get("created_at") else ""),
+    ("Phone", lambda s, m, n: s.get("phone_number") or ""),
+    ("Direction", lambda s, m, n: s.get("direction") or ""),
+    ("Status", lambda s, m, n: s.get("status") or ""),
+    ("Outcome", lambda s, m, n: s.get("disposition_code") or ""),
+    ("Promise date", lambda s, m, n: _clean(m.get("ptp_date") or m.get("commitment_date"))),
+    ("Promise time", lambda s, m, n: _clean(m.get("ptp_time"))),
+    ("Promise amount", lambda s, m, n: _clean(m.get("ptp_amt"))),
+    ("Cooperation", lambda s, m, n: _clean(m.get("user_cooperation_level"))),
+    ("Interruptions", lambda s, m, n: m.get("interruption_count", s.get("interruption_count", 0))),
+    ("Turns", lambda s, m, n: n),
+    ("Duration (s)", lambda s, m, n: _duration_seconds(s)),
+    ("Language", lambda s, m, n: s.get("language") or _clean(m.get("language_detected"))),
+    ("Use case", lambda s, m, n: s.get("use_case") or ""),
+    ("Ended by", lambda s, m, n: s.get("hangup_source") or ""),
+    ("Customer said", lambda s, m, n: _clean(m.get("customer_said"))),
+    ("Session id", lambda s, m, n: s.get("session_id") or ""),
+]
+
+
+@app.get("/reports/calls.csv")
+async def report_calls_csv(
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    disposition: Optional[str] = None,
+    direction: Optional[str] = None,
+    search: Optional[str] = None,
+    limit: int = 5000,
+) -> Response:
+    """Every call in the window as a spreadsheet.
+
+    A client asks for the result of a campaign as a file they can open and forward, and
+    until now the only way to get one was to read the console screen by screen.
+    """
+    query = _report_query(date_from, date_to, disposition, direction, search)
+    sessions = await handler.db.sessions.find(query).sort("created_at", -1).to_list(
+        max(1, min(limit, 50000))
+    )
+
+    buffer = _io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow([name for name, _ in REPORT_COLUMNS])
+    for session in sessions:
+        model = session.get("model_data") or {}
+        turns = await handler.db.conversations.count_documents(
+            {"session_id": session["session_id"]}
+        )
+        writer.writerow([fn(session, model, turns) for _, fn in REPORT_COLUMNS])
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    filename = "qsilon-calls-" + stamp + ".csv"
+    return Response(
+        # Excel reads UTF-8 correctly only with the BOM, and these transcripts are
+        # Devanagari more often than not.
+        content="\ufeff" + buffer.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="' + filename + '"'},
+    )
+
+
+@app.get("/analytics/summary")
+async def analytics_summary(
+    date_from: Optional[str] = None, date_to: Optional[str] = None
+) -> dict:
+    """Headline numbers for a period, counted in the database rather than in the browser."""
+    window = _session_window(date_from, date_to)
+    sessions = handler.db.sessions
+
+    total = await sessions.count_documents(window)
+    scored = await sessions.count_documents(
+        {**window, "disposition_code": {"$nin": [None, ""]}}
+    )
+
+    by_disposition = await sessions.aggregate([
+        {"$match": {**window, "disposition_code": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$disposition_code", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]).to_list(50)
+
+    by_day = await sessions.aggregate([
+        {"$match": {**window, "created_at": {"$ne": None}}},
+        {"$group": {
+            "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$created_at"}},
+            "calls": {"$sum": 1},
+            "promises": {
+                "$sum": {"$cond": [{"$in": ["$disposition_code", ["PTP", "FPTP"]]}, 1, 0]}
+            },
+        }},
+        {"$sort": {"_id": 1}},
+    ]).to_list(400)
+
+    by_language = await sessions.aggregate([
+        {"$match": {**window, "language": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$language", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+    ]).to_list(20)
+
+    promises = sum(d["count"] for d in by_disposition if d["_id"] in ("PTP", "FPTP"))
+    return {
+        "total": total,
+        "scored": scored,
+        "promises": promises,
+        "promise_rate": round(promises / scored * 100, 1) if scored else 0.0,
+        "by_disposition": [{"code": d["_id"], "count": d["count"]} for d in by_disposition],
+        "by_day": [
+            {"date": d["_id"], "calls": d["calls"], "promises": d["promises"]} for d in by_day
+        ],
+        "by_language": [{"language": d["_id"], "count": d["count"]} for d in by_language],
+    }
 
 
 @app.get("/template-placeholders")
