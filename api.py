@@ -1316,6 +1316,80 @@ async def template_placeholders(
     }
 
 
+# Where a mapping key can live inside a session document. "root" is the document itself;
+# the others are the nested objects the analysis and the carrier write into.
+MAPPING_SOURCES = ("model_data", "call_info")
+
+
+@app.get("/mapping-keys/discover")
+async def discover_mapping_keys(sample: int = 200) -> dict:
+    """The keys real calls actually carry, next to the ones the catalog already lists.
+
+    The catalog was maintained by hand, one prompt at a time, against data the system
+    writes itself - so it drifted: keys the analysis produces every call were missing,
+    and keys nobody writes any more sat in the list. Reading the documents answers it.
+    """
+    known = await handler.db.get_mapping_keys() or {}
+    sessions = await handler.db.sessions.find({}).sort("created_at", -1).to_list(
+        max(1, min(sample, 2000))
+    )
+
+    found: Dict[str, Dict[str, int]] = {"root": {}}
+    for source in MAPPING_SOURCES:
+        found[source] = {}
+    for session in sessions:
+        for key, value in session.items():
+            if key == "_id" or isinstance(value, (dict, list)):
+                continue
+            found["root"][key] = found["root"].get(key, 0) + 1
+        for source in MAPPING_SOURCES:
+            nested = session.get(source)
+            if isinstance(nested, dict):
+                for key in nested:
+                    found[source][key] = found[source].get(key, 0) + 1
+
+    categories = []
+    for name in ("root", *MAPPING_SOURCES):
+        listed = [str(k) for k in (known.get(name) or [])]
+        counts = found.get(name, {})
+        keys = [
+            {
+                "key": key,
+                "calls": count,
+                # How often it is actually filled in, which is what decides whether it is
+                # worth mapping a column to.
+                "coverage": round(count / len(sessions) * 100) if sessions else 0,
+                "listed": key in listed,
+            }
+            for key, count in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+        ]
+        categories.append({
+            "category": name,
+            "keys": keys,
+            "new": [k["key"] for k in keys if not k["listed"]],
+            "listed_but_unseen": [k for k in listed if k not in counts],
+        })
+
+    return {"sampled": len(sessions), "categories": categories}
+
+
+@app.post("/mapping-keys/adopt", dependencies=[Depends(require_admin)])
+async def adopt_mapping_keys(sample: int = 200) -> dict:
+    """Add every key the sampled calls carry to the catalog, leaving what is there alone."""
+    discovered = await discover_mapping_keys(sample=sample)
+    categories = await handler.db.get_mapping_keys() or {}
+    added: Dict[str, List[str]] = {}
+    for entry in discovered["categories"]:
+        name = entry["category"]
+        if not entry["new"]:
+            continue
+        categories[name] = [*(categories.get(name) or []), *entry["new"]]
+        added[name] = entry["new"]
+    if added:
+        await handler.db.set_mapping_keys(categories)
+    return {"added": added, "sampled": discovered["sampled"], "categories": categories}
+
+
 @app.get("/mapping-keys")
 async def get_mapping_keys() -> dict:
     return {"categories": await handler.db.get_mapping_keys()}

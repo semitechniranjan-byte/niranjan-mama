@@ -143,9 +143,19 @@ class DatabaseService:
         await self.sessions.update_one({"session_id": session_id}, {"$set": kwargs})
 
     async def update_model_data(self, session_id: str, data: dict) -> None:
-        if not self.ready:
+        """Merge fields into a session's model_data.
+
+        This used to $set the whole object, so a caller writing one field erased every
+        other one. Adding a summary to 71 already-scored calls took the disposition detail
+        - promise date, cooperation, what the customer said - with it. Writing field by
+        field means a partial update stays partial.
+        """
+        if not self.ready or not data:
             return
-        await self.sessions.update_one({"session_id": session_id}, {"$set": {"model_data": data}})
+        await self.sessions.update_one(
+            {"session_id": session_id},
+            {"$set": {f"model_data.{key}": value for key, value in data.items()}},
+        )
 
     async def add_conversation_message(self, session_id: str, role: str, content: str, **kwargs) -> str:
         if not self.ready:
