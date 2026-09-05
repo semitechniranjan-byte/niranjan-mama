@@ -1343,13 +1343,32 @@ class CallHandler:
         templates = await self.db.list_templates()
         if not templates:
             return None
+        template = templates[0]
+        use_case = session.get("use_case")
         resolved = resolve_template_config(
-            templates[0],
+            template,
             session.get("format_values") or {},
             language=session.get("language"),
-            use_case=session.get("use_case"),
+            use_case=use_case,
         )
-        return (resolved or {}).get("analysis_prompt") or None
+        prompt = (resolved or {}).get("analysis_prompt") or ""
+        if prompt:
+            return prompt
+
+        # The variant that ran may have a script but no scoring prompt - emi_collection has
+        # one for hindi and none for english, and a call taken in english then went unscored.
+        # Scoring rules do not depend on the language spoken, and the transcript travels
+        # inside the prompt, so any prompt configured for this use case will do.
+        languages = ((template.get("use_cases") or {}).get(use_case) or {}).get("languages") or {}
+        for entry in languages.values():
+            candidate = (entry or {}).get("analysis_prompt") or ""
+            if candidate:
+                logger.warning(
+                    "ANALYSIS [%s] no scoring prompt for %s/%s; using another language's",
+                    session_id, use_case, session.get("language"),
+                )
+                return candidate
+        return None
 
     async def _analysis_client(self) -> GroqLLMService:
         """The model that scores a finished call.
