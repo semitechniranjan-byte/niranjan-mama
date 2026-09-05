@@ -47,6 +47,11 @@ function placeholderFor(key: string): string {
   return KEY_EXAMPLES[key] ?? "";
 }
 
+/** Keys that hold a sentence rather than a word, and so get a full row and a textarea. */
+function isLongFormKey(key: string): boolean {
+  return /INFO|DETAILS|ADDRESS|NOTES|DESCRIPTION|SUMMARY|MESSAGE/.test(key);
+}
+
 function loadHistory(): HistoryEntry[] {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
@@ -151,6 +156,9 @@ export function Calls() {
   });
   const required = useMemo(() => placeholderInfo?.placeholders ?? [], [placeholderInfo]);
   const requiredKey = required.join("|");
+  const filledCount = required.filter(
+    (k) => fields.find((f) => f.key.trim().toUpperCase() === k)?.value.trim(),
+  ).length;
 
   // Give every placeholder its own box, keeping anything already typed and any extra key
   // the operator added by hand.
@@ -346,53 +354,74 @@ export function Calls() {
           Icon={IconUser}
           title="Customer Details"
           action={
-            <button
-              type="button"
-              onClick={() => setFields([...fields, { key: "", value: "" }])}
-              className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              Add Field
-            </button>
+            <div className="flex items-center gap-3">
+              {required.length > 0 && (
+                <span className="text-[11px] text-slate-500">
+                  <span
+                    className={filledCount === required.length ? "text-emerald-600" : "text-amber-600"}
+                  >
+                    {filledCount}
+                  </span>
+                  <span className="text-slate-400"> / {required.length} filled</span>
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={() => setFields([...fields, { key: "", value: "" }])}
+                className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Add Field
+              </button>
+            </div>
           }
         >
-          {required.length > 0 && (
-            <p className="mb-3 text-[11px] text-slate-500">
-              This script uses{" "}
-              <span className="font-medium text-slate-700">{required.length}</span>{" "}
-              placeholder{required.length === 1 ? "" : "s"}. Anything left empty is spoken as a
-              gap, so fill them all.
-            </p>
-          )}
-          <div className="space-y-3">
+          {/* Two to a row: one placeholder per full-width line turned five short answers
+              into a wall of identical boxes, and free text needs the room more than a name
+              does. */}
+          <div className="grid gap-x-4 gap-y-3 sm:grid-cols-2">
             {fields.map((f, idx) => {
               const key = f.key.trim().toUpperCase();
               const fromScript = required.includes(key);
+              const wide = fromScript && isLongFormKey(key);
+              const empty = !f.value.trim();
               return (
-                <div key={`${key || "extra"}-${idx}`} className="flex items-end gap-2">
+                <div
+                  key={`${key || "extra"}-${idx}`}
+                  className={wide || !fromScript ? "sm:col-span-2" : undefined}
+                >
                   {fromScript ? (
-                    <label className="flex-1 text-xs font-medium text-slate-600">
-                      <span className="flex items-center gap-1.5">
+                    <label className="block">
+                      <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                        {empty && (
+                          <span
+                            className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400"
+                            title="Not filled in yet"
+                          />
+                        )}
                         {prettyKey(key)}
-                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-indigo-600">
+                        <span className="font-mono text-[9px] font-normal text-slate-400">
                           {key}
                         </span>
-                        {!f.value.trim() && (
-                          <span className="text-[10px] font-normal text-amber-600">empty</span>
-                        )}
                       </span>
-                      <input
-                        value={f.value}
-                        onChange={(e) => setField(idx, { value: e.target.value })}
-                        placeholder={placeholderFor(key)}
-                        className={`mt-1 h-9 w-full rounded-lg border px-2.5 text-sm transition focus:outline-none focus:ring-2 focus:ring-indigo-100 ${
-                          f.value.trim()
-                            ? "border-slate-300 focus:border-indigo-400"
-                            : "border-amber-300 bg-amber-50/40 focus:border-amber-400"
-                        }`}
-                      />
+                      {wide ? (
+                        <textarea
+                          value={f.value}
+                          onChange={(e) => setField(idx, { value: e.target.value })}
+                          rows={2}
+                          placeholder={placeholderFor(key)}
+                          className="w-full resize-y rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                        />
+                      ) : (
+                        <input
+                          value={f.value}
+                          onChange={(e) => setField(idx, { value: e.target.value })}
+                          placeholder={placeholderFor(key)}
+                          className="h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                        />
+                      )}
                     </label>
                   ) : (
-                    <>
+                    <div className="flex items-end gap-2">
                       <label className="flex-1 text-xs font-medium text-slate-600">
                         Key
                         <input
@@ -411,24 +440,22 @@ export function Calls() {
                           className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                         />
                       </label>
-                    </>
+                      {/* Only the hand-added rows can go; the script's own are not optional,
+                          so they carry no disabled button to look at. */}
+                      <button
+                        type="button"
+                        onClick={() => setFields(fields.filter((_, i) => i !== idx))}
+                        className="mb-1 rounded-lg px-2 py-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                        title="Remove field"
+                      >
+                        <IconTrash size={14} />
+                      </button>
+                    </div>
                   )}
-                  <button
-                    type="button"
-                    onClick={() => setFields(fields.filter((_, i) => i !== idx))}
-                    disabled={fromScript || fields.length === 1}
-                    className="mb-1 rounded-lg px-2 py-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500 disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-slate-400"
-                    title={fromScript ? "The script needs this one" : "Remove field"}
-                  >
-                    <IconTrash size={14} />
-                  </button>
                 </div>
               );
             })}
           </div>
-          <p className="mt-3 text-[11px] text-slate-400">
-            Extra keys are upper-cased to match the placeholders in your prompt.
-          </p>
         </Card>
 
         {error && (
