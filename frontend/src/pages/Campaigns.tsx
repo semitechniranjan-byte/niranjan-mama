@@ -1,5 +1,5 @@
-import { useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createCampaign,
@@ -74,6 +74,8 @@ export function Campaigns() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [name, setName] = useState("");
+  // A generated name should not overwrite one the operator has typed.
+  const nameEdited = useRef(false);
   const [mode, setMode] = useState("test");
   const [datasheetId, setDatasheetId] = useState("");
   const [useCase, setUseCase] = useState("");
@@ -99,7 +101,31 @@ export function Campaigns() {
   const selectedLanguageReady =
     language === "auto" || languages.find((l) => l.key === language)?.ready !== false;
 
+  // Arriving from a datasheet: open the form with that sheet already chosen, so uploading
+  // a file and calling it are one movement rather than two screens and six choices.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const wanted = searchParams.get("datasheet");
+    if (!wanted) return;
+    setDatasheetId(wanted);
+    setIsModalOpen(true);
+    nameEdited.current = false;
+    searchParams.delete("datasheet");
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  // Name it after the sheet being called and the day, which is what these get called
+  // anyway, and leave it editable.
+  useEffect(() => {
+    if (!isModalOpen || !datasheetId || nameEdited.current) return;
+    const sheet = datasheets?.find((d) => d._id === datasheetId);
+    if (!sheet) return;
+    const today = new Date().toLocaleDateString(undefined, { day: "numeric", month: "short" });
+    setName(`${sheet.name} - ${today}`);
+  }, [isModalOpen, datasheetId, datasheets]);
+
   const resetForm = () => {
+    nameEdited.current = false;
     setName("");
     setDatasheetId("");
     setUseCase("");
@@ -219,7 +245,10 @@ export function Campaigns() {
               Campaign name
               <input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  nameEdited.current = true;
+                  setName(e.target.value);
+                }}
                 placeholder="July follow-up calls"
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               />

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createDatasheetTemplate,
@@ -14,7 +15,14 @@ import {
   uploadDatasheet,
 } from "../api/endpoints";
 import type { Datasheet, DatasheetTemplate, MappingKeyCategories } from "../api/types";
-import { IconX, IconTable, IconDatabase, IconTag, IconCloudUpload } from "../components/Icons";
+import {
+  IconX,
+  IconTable,
+  IconDatabase,
+  IconTag,
+  IconCloudUpload,
+  IconPhone,
+} from "../components/Icons";
 
 const DEFAULT_MAPPING_KEY_CATEGORIES: MappingKeyCategories = {
   model_data: [
@@ -1102,6 +1110,16 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
                 </td>
                 <td className="px-4 py-2 text-right">
                   <div className="flex justify-end gap-2">
+                    {/* The point of uploading a sheet is to call the people in it, so that
+                        is the one action offered first rather than left two screens away. */}
+                    <Link
+                      to={`/campaigns?datasheet=${encodeURIComponent(ds._id)}`}
+                      className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-indigo-700"
+                      title={`Start calling the ${ds.row_count} row${ds.row_count === 1 ? "" : "s"} in this sheet`}
+                    >
+                      <IconPhone size={12} />
+                      Call these
+                    </Link>
                     <button
                       onClick={() => handleRename(ds)}
                       disabled={renameMutation.isPending}
