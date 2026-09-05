@@ -10,6 +10,7 @@ import {
 import type { LanguageConfig, Template, UseCase } from "../api/types";
 import { getApiUrl } from "../api/client";
 import { useDialog } from "../components/Dialog";
+import { IconX } from "../components/Icons";
 
 function useSingleTemplate() {
   const queryClient = useQueryClient();
@@ -87,9 +88,9 @@ function LanguageEditor({
           >
             {t.label}
             {(draft[t.key as keyof LanguageConfig] || "").toString().trim() ? (
-              <span className="ml-1.5 text-emerald-500"></span>
+              <span className="ml-1.5 text-emerald-500">&#9679;</span>
             ) : (
-              <span className="ml-1.5 text-slate-300"></span>
+              <span className="ml-1.5 text-slate-300">&#9675;</span>
             )}
           </button>
         ))}
@@ -589,9 +590,10 @@ export function Templates() {
                           deleteUseCase(k);
                         }
                       }}
-                      className={`opacity-0 transition group-hover:opacity-100 ${active ? "text-white/70 hover:text-white" : "text-slate-400 hover:text-red-500"}`}
+                      title={`Delete "${useCases[k]?.label || k}"`}
+                      className={`-mr-1 rounded p-0.5 transition ${active ? "text-white/60 hover:bg-white/20 hover:text-white" : "text-slate-300 hover:bg-red-50 hover:text-red-500"}`}
                     >
-                      
+                      <IconX size={12} />
                     </span>
                   </button>
                 );
@@ -604,8 +606,8 @@ export function Templates() {
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm lg:col-span-1">
               <h3 className="text-sm font-semibold text-slate-900">Languages</h3>
               <p className="mt-1 text-xs text-slate-400">
-                <span className="text-emerald-500"></span> has a prompt ·{" "}
-                <span className="text-slate-300"></span> empty
+                <span className="text-emerald-500">●</span> has a prompt ·{" "}
+                <span className="text-slate-300">○</span> empty
               </p>
               <div className="mt-3 space-y-1.5">
                 {languageKeys.map((k) => (
@@ -620,7 +622,7 @@ export function Templates() {
                     >
                       <span>{labelFor(k)}</span>
                       <span className={isFilled(k) ? "text-emerald-500" : "text-slate-300"}>
-                        {isFilled(k) ? "" : ""}
+                        {isFilled(k) ? "●" : "○"}
                       </span>
                     </button>
                     <button

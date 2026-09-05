@@ -17,12 +17,15 @@ import {
 } from "../api/endpoints";
 import type { Datasheet, DatasheetTemplate, MappingKeyCategories } from "../api/types";
 import {
-  IconX,
-  IconTable,
-  IconDatabase,
-  IconTag,
+  IconChevronDown,
+  IconSearch,
   IconCloudUpload,
+  IconDatabase,
+  IconFile,
   IconPhone,
+  IconTable,
+  IconTag,
+  IconX,
 } from "../components/Icons";
 
 const DEFAULT_MAPPING_KEY_CATEGORIES: MappingKeyCategories = {
@@ -286,10 +289,14 @@ function AddMappingModal({
                 key={p}
                 className="flex items-center gap-1 rounded-full bg-slate-50 px-2.5 py-1 text-xs font-mono text-indigo-700"
               >
-                {idx > 0 && <span className="text-violet-300"></span>}
+                {idx > 0 && <span className="text-slate-300">&rsaquo;</span>}
                 {p}
-                <button onClick={() => removePath(p)} className="text-slate-400 hover:text-red-500">
-                  
+                <button
+                  onClick={() => removePath(p)}
+                  title="Remove"
+                  className="text-slate-400 transition hover:text-red-500"
+                >
+                  <IconX size={11} />
                 </button>
               </span>
             ))}
@@ -309,8 +316,8 @@ function AddMappingModal({
             className="w-full rounded-md border border-slate-300 px-3 py-2 pr-8 text-sm"
           />
           <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">
-            
-          </span>
+                <IconSearch size={14} />
+              </span>
         </div>
         <div className="mt-2 max-h-40 overflow-y-auto rounded-md border border-slate-100">
           {filtered.map((p) => (
@@ -629,7 +636,9 @@ function CategoryCard({
           onClick={() => setCollapsed(!collapsed)}
           className="flex items-center gap-2 text-left"
         >
-          <span className={`text-slate-400 transition-transform ${collapsed ? "-rotate-90" : ""}`}></span>
+          <span className={`text-slate-400 transition-transform ${collapsed ? "-rotate-90" : ""}`}>
+            <IconChevronDown size={14} />
+          </span>
           <span className="text-sm font-semibold text-slate-900">{category}</span>
           <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">
             {keys.length} keys
@@ -801,8 +810,8 @@ function TemplatesTab({ availablePaths }: { availablePaths: string[] }) {
             className="w-full rounded-md border border-slate-300 px-3 py-2 pr-8 text-sm"
           />
           <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400">
-            
-          </span>
+                <IconSearch size={14} />
+              </span>
         </div>
         <button
           onClick={handleCreate}
@@ -1059,7 +1068,9 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
                         : "border-slate-200 bg-slate-50 hover:border-slate-300 hover:bg-slate-100"
                   }`}
                 >
-                  <span className="text-2xl">{file ? "" : ""}</span>
+                  <span className="text-slate-400">
+                    {file ? <IconFile size={22} /> : <IconCloudUpload size={22} />}
+                  </span>
                   {file ? (
                     <>
                       <span className="text-sm font-medium text-slate-800">{file.name}</span>

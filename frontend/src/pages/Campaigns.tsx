@@ -10,7 +10,11 @@ import {
   listTemplates,
 } from "../api/endpoints";
 import type { Campaign, Template } from "../api/types";
-import { IconX, IconEye } from "../components/Icons";
+import {
+  IconChevronRight,
+  IconEye,
+  IconX,
+} from "../components/Icons";
 
 const STATUS_DOT: Record<string, string> = {
   draft: "bg-slate-400",
@@ -445,7 +449,9 @@ export function Campaigns() {
                 className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-slate-50"
               >
                 <div className="flex items-center gap-2">
-                  <span className={`text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`}></span>
+                  <span className={`text-slate-400 transition-transform ${isOpen ? "rotate-90" : ""}`}>
+                    <IconChevronRight size={14} />
+                  </span>
                   <span className="text-sm font-semibold text-slate-900">{datasheetName(group.datasheetId)}</span>
                   <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">
                     {group.runs.length} executions
