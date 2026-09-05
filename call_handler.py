@@ -1370,6 +1370,41 @@ class CallHandler:
                 return candidate
         return None
 
+    async def _summarise_call(self, history: List[Dict[str, str]], code: Optional[str]) -> str:
+        """One plain sentence about how the call went, written once and stored.
+
+        A report of thirty rows of codes tells a client what happened only if they know
+        the codes. Generating this at export time would put a model round trip on every
+        row of every download, so it is written when the call is scored and read back for
+        free afterwards.
+        """
+        transcript = "\n".join(
+            f"{h.get('role', '').upper()}: {h.get('content', '')}" for h in history
+        )[:4000]
+        if not transcript.strip():
+            return ""
+        ask = (
+            "Summarise this collection call in ONE sentence of at most 25 words, in English. "
+            "Say what the customer agreed to or refused, and any date or amount they gave. "
+            "No preamble, no quotes, just the sentence.\n\n"
+            f"Outcome code: {code or 'unknown'}\n\n{transcript}"
+        )
+        try:
+            client = await self._analysis_client()
+            response = await asyncio.wait_for(
+                client.client.chat.completions.create(
+                    model=client.model,
+                    messages=[{"role": "user", "content": ask}],
+                    temperature=0.1,
+                    max_tokens=120,
+                ),
+                timeout=15.0,
+            )
+            return (response.choices[0].message.content or "").strip().strip('"')
+        except Exception as exc:
+            logger.info("SUMMARY [%s] skipped: %s", self.session_id, exc)
+            return ""
+
     async def _analysis_client(self) -> GroqLLMService:
         """The model that scores a finished call.
 
@@ -1425,6 +1460,8 @@ class CallHandler:
                 return
 
             code = str(result.get("disposition_code") or "").upper() or None
+            if not str(result.get("summary") or "").strip():
+                result["summary"] = await self._summarise_call(history, code)
             await self.db.update_model_data(session_id, result)
             # Also store it at the top level. It was only ever nested inside model_data,
             # so every list view had to dig for it and the session API never exposed it.

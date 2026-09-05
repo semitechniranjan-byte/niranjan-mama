@@ -1161,6 +1161,7 @@ REPORT_COLUMNS = [
     ("Language", lambda s, m, n: s.get("language") or _clean(m.get("language_detected"))),
     ("Use case", lambda s, m, n: s.get("use_case") or ""),
     ("Ended by", lambda s, m, n: s.get("hangup_source") or ""),
+    ("Summary", lambda s, m, n: _clean(m.get("summary"))),
     ("Customer said", lambda s, m, n: _clean(m.get("customer_said"))),
     ("Session id", lambda s, m, n: s.get("session_id") or ""),
 ]
