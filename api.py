@@ -591,10 +591,26 @@ async def list_sessions(
 
     limit = max(1, min(limit, 200))
     total = await handler.db.sessions.count_documents(query)
-    cursor = handler.db.sessions.find(query).sort("created_at", -1).skip(max(0, skip)).limit(limit)
+    # Only what a list row shows. The whole document was going over the wire, and every
+    # one of them carries the ~3000-character script it ran, so a page of 25 rows spent
+    # most of its weight on prompt text nothing on screen ever reads.
+    fields = {
+        "session_id": 1, "phone_number": 1, "direction": 1, "status": 1, "active": 1,
+        "created_at": 1, "started_at": 1, "ended_at": 1, "disposition_code": 1,
+        "language": 1, "use_case": 1, "hangup_source": 1,
+        "model_data.summary": 1, "call_info.Duration": 1,
+    }
+    cursor = (
+        handler.db.sessions.find(query, fields)
+        .sort("created_at", -1)
+        .skip(max(0, skip))
+        .limit(limit)
+    )
     sessions = []
     async for doc in cursor:
         doc["_id"] = str(doc.get("_id"))
+        doc["summary"] = (doc.pop("model_data", None) or {}).get("summary") or ""
+        doc["duration_seconds"] = _duration_seconds(doc)
         sessions.append(doc)
     return {"sessions": sessions, "total": total, "limit": limit, "skip": skip}
 

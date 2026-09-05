@@ -30,6 +30,9 @@ export interface Session {
   format_values?: Record<string, unknown>;
   dynamic_fields?: Record<string, unknown>;
   model_data?: Record<string, unknown>;
+  /** One sentence about the call, written when it was scored. Sent with list rows. */
+  summary?: string;
+  duration_seconds?: number;
   reason?: string;
   recording_url?: string | null;
   campaign_id?: string;

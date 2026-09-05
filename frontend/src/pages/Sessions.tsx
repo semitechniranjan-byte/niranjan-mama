@@ -7,6 +7,12 @@ import { getDispositions, listSessionPage } from "../api/endpoints";
 
 const PAGE_SIZE = 25;
 
+/** 103 -> "1m 43s", which reads faster than a raw second count in a column. */
+function formatLength(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
 export function Sessions() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [directionFilter, setDirectionFilter] = useState("all");
@@ -104,7 +110,8 @@ export function Sessions() {
               <tr>
                 <th className="px-4 py-2.5 font-semibold">Number</th>
                 <th className="px-4 py-2.5 font-semibold">Outcome</th>
-                <th className="px-4 py-2.5 font-semibold">Status</th>
+                <th className="px-4 py-2.5 font-semibold">What happened</th>
+                <th className="px-4 py-2.5 font-semibold">Length</th>
                 <th className="px-4 py-2.5 font-semibold">When</th>
                 <th className="px-4 py-2.5 text-right font-semibold">Open</th>
               </tr>
@@ -132,8 +139,19 @@ export function Sessions() {
                       />
                     )}
                   </td>
-                  <td className="px-4 py-2.5">
-                    <span className="text-xs text-slate-500">{s.status}</span>
+                  {/* The outcome code says which bucket the call fell in; this says what
+                      actually happened, which is what someone scanning the list wants. */}
+                  <td className="max-w-md px-4 py-2.5">
+                    {s.summary ? (
+                      <span className="line-clamp-2 text-xs text-slate-600" title={s.summary}>
+                        {s.summary}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-300">—</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-xs tabular-nums text-slate-500">
+                    {s.duration_seconds ? formatLength(s.duration_seconds) : "—"}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-slate-500">
                     {s.created_at ? new Date(s.created_at).toLocaleString() : "-"}
@@ -151,7 +169,7 @@ export function Sessions() {
               ))}
               {rows.length === 0 && !isLoading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-400">
                     {debounced || statusFilter !== "all" || directionFilter !== "all"
                       ? "No calls match these filters."
                       : "No calls yet."}
@@ -160,7 +178,7 @@ export function Sessions() {
               )}
               {isLoading && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-sm text-slate-400">
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-slate-400">
                     Loading…
                   </td>
                 </tr>
