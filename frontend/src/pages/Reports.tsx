@@ -26,7 +26,8 @@ const RANGES = [
 const COLUMNS = [
   "Date", "Time", "Phone", "Direction", "Status", "Outcome", "Promise date",
   "Promise time", "Promise amount", "Cooperation", "Interruptions", "Turns",
-  "Duration (s)", "Language", "Use case", "Ended by", "Customer said", "Session id",
+  "Duration (s)", "Language", "Use case", "Ended by", "Summary", "Customer said",
+  "Session id",
 ];
 
 export function Reports() {
@@ -186,7 +187,7 @@ export function Reports() {
                 </span>
                 <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
                   <div
-                    className={`h-full rounded-full ${tone.value.replace("text-", "bg-")}`}
+                    className={`h-full rounded-full ${tone.bar}`}
                     style={{ width: `${Math.max(pct, 1.5)}%` }}
                   />
                 </div>

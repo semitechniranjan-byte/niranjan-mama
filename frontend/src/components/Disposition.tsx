@@ -27,6 +27,14 @@ export type DispositionTone = {
   tile: string;
   /** Accent used for the numeric value on a card. */
   value: string;
+  /**
+   * Filled bar colour, written out in full.
+   *
+   * Deriving this from `value` at runtime - "text-emerald-700".replace("text-","bg-") -
+   * produced a class name that appears nowhere in the source, so Tailwind never generated
+   * it and every bar rendered with no fill at all.
+   */
+  bar: string;
   Icon: ComponentType<{ size?: number }>;
   /** Commercial grouping, used for the summary counters. */
   group: "won" | "pending" | "lost" | "unreached";
@@ -34,24 +42,28 @@ export type DispositionTone = {
 
 const WON: Omit<DispositionTone, "Icon"> = {
   badge: "bg-emerald-100 text-emerald-800 ring-1 ring-emerald-200",
+  bar: "bg-emerald-500",
   tile: "bg-emerald-50 text-emerald-600",
   value: "text-emerald-700",
   group: "won",
 };
 const PENDING: Omit<DispositionTone, "Icon"> = {
   badge: "bg-amber-100 text-amber-800 ring-1 ring-amber-200",
+  bar: "bg-amber-500",
   tile: "bg-amber-50 text-amber-600",
   value: "text-amber-700",
   group: "pending",
 };
 const LOST: Omit<DispositionTone, "Icon"> = {
   badge: "bg-rose-100 text-rose-800 ring-1 ring-rose-200",
+  bar: "bg-rose-500",
   tile: "bg-rose-50 text-rose-600",
   value: "text-rose-700",
   group: "lost",
 };
 const UNREACHED: Omit<DispositionTone, "Icon"> = {
   badge: "bg-slate-100 text-slate-600 ring-1 ring-slate-200",
+  bar: "bg-slate-400",
   tile: "bg-slate-100 text-slate-500",
   value: "text-slate-600",
   group: "unreached",

@@ -122,17 +122,22 @@ export function Analytics() {
               const height = (d.calls / busiest) * 100;
               const promiseShare = d.calls ? (d.promises / d.calls) * 100 : 0;
               return (
-                <div key={d.date} className="flex min-w-[26px] flex-1 flex-col items-center gap-1">
+                <div key={d.date} className="flex h-full min-w-[26px] flex-1 flex-col items-center gap-1">
                   <span className="text-[9px] text-slate-400">{d.calls}</span>
-                  <div
-                    className="relative flex w-full flex-col justify-end overflow-hidden rounded-t bg-indigo-200"
-                    style={{ height: `${Math.max(height, 4)}%` }}
-                    title={`${d.date}: ${d.calls} calls, ${d.promises} promises`}
-                  >
+                  {/* The column is the full height of the chart and the bar takes a share
+                      of it. Without a definite height on the column, a percentage has
+                      nothing to resolve against and every bar collapsed to nothing. */}
+                  <div className="flex w-full flex-1 flex-col justify-end">
                     <div
-                      className="w-full bg-indigo-600"
-                      style={{ height: `${promiseShare}%` }}
-                    />
+                      className="relative flex w-full flex-col justify-end overflow-hidden rounded-t bg-indigo-200"
+                      style={{ height: `${Math.max(height, 4)}%` }}
+                      title={`${d.date}: ${d.calls} calls, ${d.promises} promises`}
+                    >
+                      <div
+                        className="w-full bg-indigo-600"
+                        style={{ height: `${promiseShare}%` }}
+                      />
+                    </div>
                   </div>
                   <span className="text-[9px] text-slate-400">{d.date.slice(5)}</span>
                 </div>
@@ -159,7 +164,7 @@ export function Analytics() {
                   </span>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
                     <div
-                      className={`h-full rounded-full ${tone.value.replace("text-", "bg-")}`}
+                      className={`h-full rounded-full ${tone.bar}`}
                       style={{ width: `${Math.max(pct, 1.5)}%` }}
                     />
                   </div>
