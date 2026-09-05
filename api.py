@@ -1377,7 +1377,13 @@ async def list_agents() -> dict:
     # Surface live utilisation next to the configured capacity.
     for agent in agents:
         agent["active_calls"] = call_registry.agent_active_count(agent["_id"])
-    return {"agents": agents, "total_active_calls": call_registry.active_count()}
+    # The page used to add the agents up and call the total the capacity, which read as
+    # 500 where the deployment runs 5. Agent limits divide a ceiling, they do not raise it.
+    return {
+        "agents": agents,
+        "total_active_calls": call_registry.active_count(),
+        "max_concurrent_calls": settings.MAX_CONCURRENT_CALLS,
+    }
 
 
 @app.post("/agents", dependencies=[Depends(require_admin)])

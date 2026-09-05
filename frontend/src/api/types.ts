@@ -247,6 +247,8 @@ export interface Agent {
 export interface AgentsResponse {
   agents: Agent[];
   total_active_calls: number;
+  /** The deployment-wide ceiling. Agent limits divide it; they never raise it. */
+  max_concurrent_calls?: number;
 }
 
 /** One selectable vendor for a capability (STT/LLM/TTS/telephony). */

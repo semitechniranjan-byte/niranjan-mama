@@ -186,7 +186,12 @@ export function Agents() {
   const deleteMutation = useMutation({ mutationFn: deleteAgent, onSuccess: invalidate });
 
   const agents = data?.agents ?? [];
-  const totalCapacity = agents.reduce((sum, a) => sum + (a.max_concurrent_calls ?? 0), 0);
+  // Agent limits divide the deployment ceiling; they do not raise it. Adding them up and
+  // calling the total the capacity read as 500 on a host that runs 5.
+  const ceiling = data?.max_concurrent_calls ?? 0;
+  const configured = agents.reduce((sum, a) => sum + (a.max_concurrent_calls ?? 0), 0);
+  const totalCapacity = ceiling > 0 ? Math.min(configured, ceiling) : configured;
+  const oversubscribed = ceiling > 0 && configured > ceiling;
   const avgSeconds =
     agents.length > 0
       ? Math.round(agents.reduce((s, a) => s + (a.max_call_seconds ?? 180), 0) / agents.length)
@@ -211,27 +216,33 @@ export function Agents() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <div className="text-xs text-slate-500">Agents</div>
-          <div className="mt-1 text-xl font-semibold text-slate-900">{agents.length}</div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <div className="text-xs text-slate-500">Total capacity</div>
-          <div className="mt-1 text-xl font-semibold text-slate-900">
-            {totalCapacity}
-            <span className="ml-1 text-xs font-normal text-slate-400">at a time</span>
-          </div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <div className="text-xs text-slate-500">Calls in progress</div>
-          <div className="mt-1 text-xl font-semibold text-slate-900">
-            {totalActive}
-            <span className="ml-1 text-xs font-normal text-slate-400">
-              {totalCapacity > 0 ? `· ${Math.round((totalActive / totalCapacity) * 100)}% used` : ""}
-            </span>
-          </div>
-        </div>
+        <Tile label="Agents" value={String(agents.length)} />
+        <Tile
+          label="Calls running now"
+          value={String(totalActive)}
+          hint={totalCapacity > 0 ? `of ${totalCapacity} that can run at once` : undefined}
+          tone={totalActive > 0 ? "text-emerald-700" : undefined}
+        />
+        <Tile
+          label="Ceiling on this host"
+          value={ceiling > 0 ? String(ceiling) : "—"}
+          hint={
+            oversubscribed
+              ? `Agents are set to ${configured}; the host allows ${ceiling}`
+              : "Set by MAX_CONCURRENT_CALLS"
+          }
+          tone={oversubscribed ? "text-amber-700" : undefined}
+        />
       </div>
+
+      {oversubscribed && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          These agents are configured for <strong>{configured}</strong> calls at once, but this
+          host runs at most <strong>{ceiling}</strong>. Calls beyond that wait their turn rather
+          than failing — raise MAX_CONCURRENT_CALLS, and the instance size with it, to use the
+          rest.
+        </div>
+      )}
 
       {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
 
@@ -240,7 +251,9 @@ export function Agents() {
         {agents.map((a) => {
           const used = a.active_calls ?? 0;
           const pct = a.max_concurrent_calls > 0 ? Math.min(100, (used / a.max_concurrent_calls) * 100) : 0;
-          const perHour = Math.round((3600 / (a.max_call_seconds || 180)) * a.max_concurrent_calls);
+          // Throughput off an agent limit the host cannot honour is a made-up number.
+          const effective = ceiling > 0 ? Math.min(a.max_concurrent_calls, ceiling) : a.max_concurrent_calls;
+          const perHour = Math.round((3600 / (a.max_call_seconds || 180)) * effective);
           return (
             <div
               key={a._id}
@@ -262,11 +275,19 @@ export function Agents() {
                 </span>
               </div>
 
-              <div className="mt-3 flex items-baseline gap-1">
+              <div className="mt-3 flex items-baseline gap-1.5">
                 <span className="text-2xl font-semibold tracking-tight text-slate-900">
-                  {a.max_concurrent_calls}
+                  {effective}
                 </span>
                 <span className="text-xs text-slate-400">at a time</span>
+                {effective !== a.max_concurrent_calls && (
+                  <span
+                    className="ml-auto rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700"
+                    title={`Set to ${a.max_concurrent_calls}, capped by the host ceiling of ${ceiling}`}
+                  >
+                    set {a.max_concurrent_calls}
+                  </span>
+                )}
               </div>
 
               <div className="mt-2 space-y-0.5 text-[11px] text-slate-500">
@@ -291,8 +312,9 @@ export function Agents() {
                 />
               </div>
 
-              {/* Actions stay quiet until the tile is hovered so the grid reads cleanly. */}
-              <div className="mt-3 flex gap-1.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+              {/* Kept visible. Hiding these until hover left a band of empty space under
+                  every tile and a ghost of the buttons showing through it. */}
+              <div className="mt-auto flex gap-1.5 pt-3">
                 <button
                   onClick={() => setModal({ agent: a })}
                   className="flex-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
@@ -348,6 +370,26 @@ export function Agents() {
           }
         />
       )}
+    </div>
+  );
+}
+
+function Tile({
+  label,
+  value,
+  hint,
+  tone,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${tone || "text-slate-900"}`}>{value}</div>
+      {hint && <div className="mt-0.5 text-[11px] text-slate-400">{hint}</div>}
     </div>
   );
 }
