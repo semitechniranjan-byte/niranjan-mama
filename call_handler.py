@@ -3,6 +3,7 @@ import base64
 import logging
 import re
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 
@@ -231,6 +232,7 @@ class CallHandler:
         # Set alongside the system prompt when a call is configured, so the same
         # scoring runs whether the call came from a campaign or the Test Call page.
         self.analysis_prompt: Optional[str] = None
+        self._analysis_llm: Optional[GroqLLMService] = None
         self._backup: Optional[GroqLLMService] = None
 
     async def apply_prompt_config(
@@ -259,7 +261,11 @@ class CallHandler:
             )
 
     async def initialize(
-        self, session_id: Optional[str] = None, greeting_text: Optional[str] = None, start_greeting: bool = True
+        self,
+        session_id: Optional[str] = None,
+        greeting_text: Optional[str] = None,
+        start_greeting: bool = True,
+        persist_session: bool = True,
     ) -> bool:
         self.initialized = await self.db.initialize()
         self.llm.set_db_service(self.db, session_id)
@@ -275,8 +281,15 @@ class CallHandler:
         if session_id:
             self.session_id = session_id
         elif not self.session_id:
-            session = await self.db.create_session("unknown", direction="inbound")
-            self.session_id = session["session_id"]
+            if persist_session:
+                session = await self.db.create_session("unknown", direction="inbound")
+                self.session_id = session["session_id"]
+            else:
+                # The boot-time warm-up needs an id for its log lines, not a row in the
+                # client's call history. Nineteen "unknown" rows had collected, one per
+                # restart, each appearing in Conversations as a call that never happened
+                # and scoring as unreachable.
+                self.session_id = f"warmup-{uuid.uuid4().hex[:8]}"
             self.llm.set_db_service(self.db, self.session_id)
 
         session_doc = await self.db.get_session(self.session_id) if self.session_id else None
@@ -1300,6 +1313,69 @@ class CallHandler:
             logger.info("No backup LLM available: %s", exc)
             return None
 
+    async def _resolve_analysis_prompt(self, session_id: str) -> Optional[str]:
+        """The scoring prompt for a call, however this handler was reached.
+
+        The prompt is put on the per-call handler when the call is placed, but a caller who
+        hangs up first arrives through the telephony webhook, which runs on the shared
+        handler instead - and that one has no prompt. So a call was scored only when the
+        agent itself ended it, which is the rarer case: one of the last twenty had an
+        outcome, and the disposition is the whole point of the product.
+
+        Fall back to the handler still registered for the call, then to re-resolving the
+        prompt from the template the session recorded.
+        """
+        if self.analysis_prompt:
+            return self.analysis_prompt
+        try:
+            from .call_registry import get_call
+            from .template_service import resolve_template_config
+        except ImportError:  # pragma: no cover
+            from call_registry import get_call
+            from template_service import resolve_template_config
+
+        live = get_call(session_id)
+        prompt = getattr(live, "analysis_prompt", None) if live is not None else None
+        if prompt:
+            return prompt
+
+        session = await self.db.get_session(session_id) or {}
+        templates = await self.db.list_templates()
+        if not templates:
+            return None
+        resolved = resolve_template_config(
+            templates[0],
+            session.get("format_values") or {},
+            language=session.get("language"),
+            use_case=session.get("use_case"),
+        )
+        return (resolved or {}).get("analysis_prompt") or None
+
+    async def _analysis_client(self) -> GroqLLMService:
+        """The model that scores a finished call.
+
+        Scoring runs on whichever handler the hangup arrived on, and the shared one falls
+        back to the default provider rather than the one the calls are configured with.
+        That default is a reasoning model: given the 1200-token budget it spent the lot on
+        thinking and returned an empty body, so every call it scored came back blank - and
+        took 16s to do it, or 55s when given room to finish. The conversation model answers
+        the same prompt in 1.6s, so scoring is pinned to it.
+        """
+        if self._analysis_llm is not None:
+            return self._analysis_llm
+        client = self.llm
+        if settings.GEMINI_API_KEY:
+            try:
+                candidate = GroqLLMService()
+                candidate.set_provider("gemini")
+                if candidate.provider == "gemini" and candidate.ready:
+                    candidate.set_model(settings.GEMINI_MODEL)
+                    client = candidate
+            except Exception as exc:
+                logger.info("Analysis client fell back to the call model: %s", exc)
+        self._analysis_llm = client
+        return client
+
     async def _analyse_completed_call(self, session_id: str) -> None:
         """Score a finished call and record its disposition on the session."""
         try:
@@ -1309,9 +1385,12 @@ class CallHandler:
                 await self.db.update_session(session_id, disposition_code="NR")
                 return
 
-            analysis_prompt = self.analysis_prompt
+            analysis_prompt = await self._resolve_analysis_prompt(session_id)
             if not analysis_prompt or not self.llm.ready:
-                logger.info("ANALYSIS [%s] skipped: no prompt or LLM unavailable", session_id)
+                logger.warning(
+                    "ANALYSIS [%s] skipped: prompt=%s llm_ready=%s",
+                    session_id, bool(analysis_prompt), self.llm.ready,
+                )
                 return
 
             try:
@@ -1319,7 +1398,10 @@ class CallHandler:
             except ImportError:  # pragma: no cover
                 from campaign_service import _run_post_call_analysis
 
-            result = await _run_post_call_analysis(self, session_id, analysis_prompt)
+            scorer = await self._analysis_client()
+            result = await _run_post_call_analysis(
+                self, session_id, analysis_prompt, llm=scorer,
+            )
             if not result:
                 return
 

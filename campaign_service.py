@@ -43,8 +43,11 @@ async def _wait_for_session_end(db, session_id: str, timeout: int = CALL_END_TIM
         waited += CALL_END_POLL_INTERVAL
 
 
-async def _run_post_call_analysis(handler, session_id: str, analysis_prompt: Optional[str]) -> Dict[str, Any]:
-    if not analysis_prompt or not handler.llm.ready:
+async def _run_post_call_analysis(
+    handler, session_id: str, analysis_prompt: Optional[str], llm=None,
+) -> Dict[str, Any]:
+    llm = llm or handler.llm
+    if not analysis_prompt or not llm.ready:
         return {}
     history = await handler.db.get_conversation_history(session_id)
     transcript = "\n".join(f"{h.get('role', '').upper()}: {h.get('content', '')}" for h in history)
@@ -58,11 +61,13 @@ async def _run_post_call_analysis(handler, session_id: str, analysis_prompt: Opt
         .replace("{call_date}", now.strftime("%d-%m-%Y"))
     )
     try:
-        response = await handler.llm.client.chat.completions.create(
-            model=getattr(handler.llm, "model", None) or _groq_model(),
+        response = await llm.client.chat.completions.create(
+            model=getattr(llm, "model", None) or _groq_model(),
             messages=[{"role": "user", "content": filled_prompt}],
             temperature=0.1,
-            max_tokens=1200,
+            # Room enough that a reasoning model can think and still emit the JSON. At 1200
+            # one returned finish_reason=length with an empty body and nothing was scored.
+            max_tokens=4000,
         )
         content = response.choices[0].message.content or "{}"
         content = content.strip()

@@ -177,7 +177,7 @@ def _log_configuration_report() -> None:
 @app.on_event("startup")
 async def startup() -> None:
     _log_configuration_report()
-    await handler.initialize()
+    await handler.initialize(persist_session=False)
     await _initialize_analysis_support()
 
 
