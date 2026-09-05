@@ -118,6 +118,63 @@ export type TemplatePayload = Omit<Template, "_id" | "created_at" | "updated_at"
 
 export const listTemplates = () =>
   api.get<{ templates: Template[] }>("/templates").then((r) => r.data.templates);
+export interface InspectedColumn {
+  column: string;
+  /** The column name in the shape a prompt would use it: "Customer Name" -> CUSTOMER_NAME. */
+  placeholder: string;
+  example: string;
+  filled: number;
+  coverage: number;
+  looks_like_phone: boolean;
+}
+
+/** Read a sheet's header row without importing it. */
+export const inspectDatasheetFile = (file: File) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api
+    .post<{
+      filename: string;
+      rows: number;
+      columns: InspectedColumn[];
+      phone_column: string | null;
+    }>("/datasheets/inspect", form)
+    .then((r) => r.data);
+};
+
+export interface DiscoveredKey {
+  key: string;
+  calls: number;
+  /** Share of sampled calls that actually carry this key. */
+  coverage: number;
+  listed: boolean;
+}
+
+export interface DiscoveredCategory {
+  category: string;
+  keys: DiscoveredKey[];
+  new: string[];
+  listed_but_unseen: string[];
+}
+
+/** What keys real calls carry, next to what the catalog claims. */
+export const discoverMappingKeys = (sample = 200) =>
+  api
+    .get<{ sampled: number; categories: DiscoveredCategory[] }>("/mapping-keys/discover", {
+      params: { sample },
+    })
+    .then((r) => r.data);
+
+/** Add every key the sampled calls carry; leaves everything already listed alone. */
+export const adoptMappingKeys = (sample = 200) =>
+  api
+    .post<{ added: Record<string, string[]>; sampled: number }>(
+      "/mapping-keys/adopt",
+      null,
+      { params: { sample } },
+    )
+    .then((r) => r.data);
+
 /** Who the stored key belongs to, and what that role may open right now. */
 export const getMe = () =>
   api.get<{ role: "admin" | "user"; email: string; pages: string[] }>("/auth/me").then((r) => r.data);

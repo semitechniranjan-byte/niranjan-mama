@@ -7,7 +7,10 @@ import {
   deleteDatasheet,
   deleteDatasheetTemplate,
   getDatasheet,
+  adoptMappingKeys,
+  discoverMappingKeys,
   getMappingKeys,
+  inspectDatasheetFile,
   listDatasheetTemplates,
   listDatasheets,
   renameDatasheet,
@@ -171,10 +174,46 @@ function RequiredColumnsCard({
   save: (payload: Partial<DatasheetTemplate>) => void;
 }) {
   const dialog = useDialog();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [reading, setReading] = useState(false);
+  const [readNote, setReadNote] = useState<string | null>(null);
+
   const addColumn = async () => {
     const name = (await dialog.prompt("New required column", { placeholder: "CUSTOMER_NAME" }))?.trim();
     if (!name || template.required_columns.includes(name)) return;
     save({ required_columns: [...template.required_columns, name] });
+  };
+
+  /**
+   * Take the column names from a sheet instead of typing them.
+   *
+   * These were entered by hand from a file the operator already had open, and one typo
+   * meant the real upload was rejected later for a column that looked identical. The
+   * file carries its own headings, so they are read straight out of it - as the
+   * {PLACEHOLDER} form a prompt uses. Nothing is imported and no row is stored.
+   */
+  const readFromFile = async (file: File) => {
+    setReading(true);
+    setReadNote(null);
+    try {
+      const info = await inspectDatasheetFile(file);
+      const names = info.columns.map((c) => c.placeholder).filter(Boolean);
+      const added = names.filter((n) => !template.required_columns.includes(n));
+      if (!added.length) {
+        setReadNote(`${info.filename}: all ${names.length} columns are already listed.`);
+        return;
+      }
+      save({ required_columns: [...template.required_columns, ...added] });
+      setReadNote(
+        `${info.filename}: ${info.rows} rows, added ${added.length} of ${names.length} columns` +
+          (info.phone_column ? ` · phone looks like "${info.phone_column}"` : ""),
+      );
+    } catch (err) {
+      setReadNote((err as Error).message);
+    } finally {
+      setReading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   };
   const removeColumn = (col: string) => {
     save({ required_columns: template.required_columns.filter((c) => c !== col) });
@@ -187,14 +226,38 @@ function RequiredColumnsCard({
         accent="bg-blue-50 text-blue-600"
         title="Required Columns"
         action={
-          <button
-            onClick={addColumn}
-            className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
-          >
-            Add Column
-          </button>
+          <div className="flex gap-2">
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,.xlsx,.xlsm"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void readFromFile(f);
+              }}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              disabled={reading}
+              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+            >
+              {reading ? "Reading…" : "Read from file"}
+            </button>
+            <button
+              onClick={addColumn}
+              className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+            >
+              Add Column
+            </button>
+          </div>
         }
       />
+      {readNote && (
+        <p className="border-b border-slate-100 bg-slate-50/70 px-3 py-2 text-[11px] text-slate-600">
+          {readNote}
+        </p>
+      )}
       <div className="space-y-2 p-3">
         {template.required_columns.map((col) => (
           <div
@@ -681,6 +744,11 @@ function CategoryCard({
 }
 
 function MappingKeysTab() {
+  const queryClient = useQueryClient();
+  const [scan, setScan] = useState<Awaited<ReturnType<typeof discoverMappingKeys>> | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [adopting, setAdopting] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
   const dialog = useDialog();
   const { categories, isLoading, save } = useMappingKeys();
 
@@ -716,13 +784,106 @@ function MappingKeysTab() {
           live in the session document. "root" keys map directly (e.g. <code>session_id</code>);
           other categories are dotted paths (e.g. <code>model_data.disposition_code</code>).
         </p>
-        <button
-          onClick={createCategory}
-          className="shrink-0 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
-        >
-          Create Category
-        </button>
+        <div className="flex shrink-0 gap-2">
+          {/* The catalog was kept by hand against data the system writes itself, so it
+              drifted both ways: keys every call carries were missing, and keys nothing
+              writes any more sat in the list. Reading the calls answers it. */}
+          <button
+            onClick={async () => {
+              setScanning(true);
+              setScanNote(null);
+              try {
+                setScan(await discoverMappingKeys());
+              } catch (err) {
+                setScanNote((err as Error).message);
+              } finally {
+                setScanning(false);
+              }
+            }}
+            disabled={scanning}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+          >
+            {scanning ? "Scanning…" : "Scan calls"}
+          </button>
+          <button
+            onClick={createCategory}
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+          >
+            Create Category
+          </button>
+        </div>
       </div>
+
+      {scan && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold text-slate-900">
+              Found in {scan.sampled} recent calls
+            </h3>
+            {scan.categories.some((c) => c.new.length > 0) && (
+              <button
+                onClick={async () => {
+                  setAdopting(true);
+                  try {
+                    const res = await adoptMappingKeys();
+                    const count = Object.values(res.added).reduce((n, k) => n + k.length, 0);
+                    setScanNote(`Added ${count} key${count === 1 ? "" : "s"} to the catalog.`);
+                    setScan(await discoverMappingKeys());
+                    queryClient.invalidateQueries({ queryKey: ["mapping-keys"] });
+                  } catch (err) {
+                    setScanNote((err as Error).message);
+                  } finally {
+                    setAdopting(false);
+                  }
+                }}
+                disabled={adopting}
+                className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+              >
+                {adopting ? "Adding…" : "Add all missing keys"}
+              </button>
+            )}
+          </div>
+          {scanNote && <p className="mt-2 text-xs text-slate-500">{scanNote}</p>}
+
+          <div className="mt-3 space-y-4">
+            {scan.categories.map((c) => (
+              <div key={c.category}>
+                <div className="flex items-baseline gap-2">
+                  <span className="font-mono text-xs font-semibold text-slate-700">
+                    {c.category}
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    {c.keys.length} seen · {c.new.length} not in the catalog
+                  </span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {c.keys.map((k) => (
+                    <span
+                      key={k.key}
+                      title={`${k.calls} of ${scan.sampled} calls carry this`}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] ${
+                        k.listed
+                          ? "bg-slate-100 text-slate-500"
+                          : "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200"
+                      }`}
+                    >
+                      {k.key}
+                      <span className={k.listed ? "text-slate-400" : "text-emerald-500"}>
+                        {k.coverage}%
+                      </span>
+                    </span>
+                  ))}
+                </div>
+                {c.listed_but_unseen.length > 0 && (
+                  <p className="mt-1.5 text-[11px] text-amber-700">
+                    Listed but never seen: {c.listed_but_unseen.join(", ")}
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
 

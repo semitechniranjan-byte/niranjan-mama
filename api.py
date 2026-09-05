@@ -1321,6 +1321,52 @@ async def template_placeholders(
 MAPPING_SOURCES = ("model_data", "call_info")
 
 
+@app.post("/datasheets/inspect")
+async def inspect_datasheet_file(file: UploadFile = File(...)) -> dict:
+    """The header row of a sheet, before anything is imported.
+
+    A template was configured by typing every column name by hand, from a file the
+    operator already had open, and a single typo meant the upload was rejected later for
+    a column that looked identical. The file knows its own headings, so it is read once
+    and offered back: the names as written, the shape they take as a {PLACEHOLDER}, and a
+    guess at which column holds the phone number.
+    """
+    content = await file.read()
+    try:
+        columns, rows = parse_datasheet_file(file.filename or "", content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    def placeholder_of(column: str) -> str:
+        cleaned = re.sub(r"[^0-9A-Za-z]+", "_", (column or "").strip()).strip("_")
+        return cleaned.upper()
+
+    sample = rows[0] if rows else {}
+    phone_like = ("mobile", "phone", "contact", "number", "msisdn", "cell")
+    columns_out = []
+    for column in columns:
+        if not (column or "").strip():
+            continue
+        filled = sum(1 for row in rows if str(row.get(column, "")).strip())
+        columns_out.append({
+            "column": column,
+            "placeholder": placeholder_of(column),
+            "example": str(sample.get(column, ""))[:60],
+            "filled": filled,
+            "coverage": round(filled / len(rows) * 100) if rows else 0,
+            "looks_like_phone": any(word in column.lower() for word in phone_like),
+        })
+
+    return {
+        "filename": file.filename,
+        "rows": len(rows),
+        "columns": columns_out,
+        "phone_column": next(
+            (c["column"] for c in columns_out if c["looks_like_phone"]), None
+        ),
+    }
+
+
 @app.get("/mapping-keys/discover")
 async def discover_mapping_keys(sample: int = 200) -> dict:
     """The keys real calls actually carry, next to the ones the catalog already lists.
