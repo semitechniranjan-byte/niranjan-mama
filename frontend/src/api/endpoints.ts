@@ -118,6 +118,18 @@ export type TemplatePayload = Omit<Template, "_id" | "created_at" | "updated_at"
 
 export const listTemplates = () =>
   api.get<{ templates: Template[] }>("/templates").then((r) => r.data.templates);
+/** The {PLACEHOLDER} names a chosen script uses, so a form can offer a box for each. */
+export const getTemplatePlaceholders = (params: {
+  template_id?: string;
+  use_case?: string;
+  language?: string;
+}) =>
+  api
+    .get<{ placeholders: string[]; use_case?: string; language?: string }>(
+      "/template-placeholders",
+      { params },
+    )
+    .then((r) => r.data);
 export const getTemplate = (id: string) =>
   api.get<{ template: Template }>(`/templates/${id}`).then((r) => r.data.template);
 export const createTemplate = (payload: TemplatePayload) =>

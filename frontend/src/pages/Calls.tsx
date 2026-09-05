@@ -3,7 +3,13 @@ import { Link } from "react-router-dom";
 import { IconEye, IconHistory, IconPhone, IconTrash, IconUser } from "../components/Icons";
 import { DispositionBadge, maskPhone } from "../components/Disposition";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createOutboundCall, getDispositions, listSessions, listTemplates } from "../api/endpoints";
+import {
+  createOutboundCall,
+  getDispositions,
+  getTemplatePlaceholders,
+  listSessions,
+  listTemplates,
+} from "../api/endpoints";
 import type { Template } from "../api/types";
 
 const HISTORY_KEY = "testCallHistory";
@@ -21,6 +27,25 @@ type HistoryEntry = {
 };
 
 type Field = { key: string; value: string };
+
+/** CUSTOMER_NAME -> "Customer name", so the form reads as a form and not as a variable list. */
+function prettyKey(key: string): string {
+  const words = key.toLowerCase().split("_").filter(Boolean);
+  if (!words.length) return key;
+  return words[0].charAt(0).toUpperCase() + words[0].slice(1) + (words.length > 1 ? " " + words.slice(1).join(" ") : "");
+}
+
+const KEY_EXAMPLES: Record<string, string> = {
+  CUSTOMER_NAME: "Niranjan Kumar",
+  COMPANY_NAME: "Qsilon",
+  ORDER_ID: "ORD-4471",
+  PROJECT_NAME: "Green Acres",
+  AGENT_CALLBACK_NUMBER: "9876543210",
+};
+
+function placeholderFor(key: string): string {
+  return KEY_EXAMPLES[key] ?? "";
+}
 
 function loadHistory(): HistoryEntry[] {
   try {
@@ -110,6 +135,37 @@ export function Calls() {
   const effectiveLanguage =
     language || (languages.find((l) => l.ready)?.key ?? languages[0]?.key ?? "");
   const selectedReady = languages.find((l) => l.key === effectiveLanguage)?.ready !== false;
+
+  // Which {PLACEHOLDER}s this particular script uses. Only the prompt knows - the EMI
+  // script wants one, the real-estate script wants five - and anything left unfilled
+  // reaches the caller as a blank in mid-sentence.
+  const { data: placeholderInfo } = useQuery({
+    queryKey: ["templatePlaceholders", template?._id, effectiveUseCase, effectiveLanguage],
+    queryFn: () =>
+      getTemplatePlaceholders({
+        template_id: template?._id,
+        use_case: effectiveUseCase,
+        language: effectiveLanguage,
+      }),
+    enabled: Boolean(effectiveUseCase),
+  });
+  const required = useMemo(() => placeholderInfo?.placeholders ?? [], [placeholderInfo]);
+  const requiredKey = required.join("|");
+
+  // Give every placeholder its own box, keeping anything already typed and any extra key
+  // the operator added by hand.
+  useEffect(() => {
+    if (!required.length) return;
+    setFields((prev) => {
+      const typed = new Map(prev.map((f) => [f.key.trim().toUpperCase(), f.value]));
+      const fromScript = required.map((key) => ({ key, value: typed.get(key) ?? "" }));
+      const extra = prev.filter(
+        (f) => f.key.trim() && !required.includes(f.key.trim().toUpperCase()),
+      );
+      return [...fromScript, ...extra];
+    });
+    // required is rebuilt on every fetch; compare by content so this does not loop.
+  }, [requiredKey]);
 
   useEffect(() => {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, HISTORY_LIMIT)));
@@ -299,42 +355,79 @@ export function Calls() {
             </button>
           }
         >
+          {required.length > 0 && (
+            <p className="mb-3 text-[11px] text-slate-500">
+              This script uses{" "}
+              <span className="font-medium text-slate-700">{required.length}</span>{" "}
+              placeholder{required.length === 1 ? "" : "s"}. Anything left empty is spoken as a
+              gap, so fill them all.
+            </p>
+          )}
           <div className="space-y-3">
-            {fields.map((f, idx) => (
-              <div key={idx} className="flex items-end gap-2">
-                <label className="flex-1 text-xs font-medium text-slate-600">
-                  Key {idx + 1}
-                  <input
-                    value={f.key}
-                    onChange={(e) => setField(idx, { key: e.target.value })}
-                    placeholder="CUSTOMER_NAME"
-                    className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                  />
-                </label>
-                <label className="flex-1 text-xs font-medium text-slate-600">
-                  Value {idx + 1}
-                  <input
-                    value={f.value}
-                    onChange={(e) => setField(idx, { value: e.target.value })}
-                    placeholder="Niraj"
-                    className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setFields(fields.filter((_, i) => i !== idx))}
-                  disabled={fields.length === 1}
-                  className="mb-1 rounded-lg px-2 py-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500 disabled:opacity-30"
-                  title="Remove field"
-                >
-                  
-                </button>
-              </div>
-            ))}
+            {fields.map((f, idx) => {
+              const key = f.key.trim().toUpperCase();
+              const fromScript = required.includes(key);
+              return (
+                <div key={`${key || "extra"}-${idx}`} className="flex items-end gap-2">
+                  {fromScript ? (
+                    <label className="flex-1 text-xs font-medium text-slate-600">
+                      <span className="flex items-center gap-1.5">
+                        {prettyKey(key)}
+                        <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-mono text-[9px] font-medium text-indigo-600">
+                          {key}
+                        </span>
+                        {!f.value.trim() && (
+                          <span className="text-[10px] font-normal text-amber-600">empty</span>
+                        )}
+                      </span>
+                      <input
+                        value={f.value}
+                        onChange={(e) => setField(idx, { value: e.target.value })}
+                        placeholder={placeholderFor(key)}
+                        className={`mt-1 h-9 w-full rounded-lg border px-2.5 text-sm transition focus:outline-none focus:ring-2 focus:ring-indigo-100 ${
+                          f.value.trim()
+                            ? "border-slate-300 focus:border-indigo-400"
+                            : "border-amber-300 bg-amber-50/40 focus:border-amber-400"
+                        }`}
+                      />
+                    </label>
+                  ) : (
+                    <>
+                      <label className="flex-1 text-xs font-medium text-slate-600">
+                        Key
+                        <input
+                          value={f.key}
+                          onChange={(e) => setField(idx, { key: e.target.value })}
+                          placeholder="ORDER_ID"
+                          className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                        />
+                      </label>
+                      <label className="flex-1 text-xs font-medium text-slate-600">
+                        Value
+                        <input
+                          value={f.value}
+                          onChange={(e) => setField(idx, { value: e.target.value })}
+                          placeholder="anything the prompt expects"
+                          className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                        />
+                      </label>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setFields(fields.filter((_, i) => i !== idx))}
+                    disabled={fromScript || fields.length === 1}
+                    className="mb-1 rounded-lg px-2 py-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500 disabled:opacity-25 disabled:hover:bg-transparent disabled:hover:text-slate-400"
+                    title={fromScript ? "The script needs this one" : "Remove field"}
+                  >
+                    <IconTrash size={14} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
           <p className="mt-3 text-[11px] text-slate-400">
-            Keys are converted to UPPERCASE automatically (e.g. customer_name CUSTOMER_NAME) to
-            match the placeholders in your prompt.
+            Extra keys are upper-cased to match the placeholders in your prompt.
           </p>
         </Card>
 

@@ -1,22 +1,40 @@
 @import "tailwindcss";
 
 /*
- * The console was flat slate-grey throughout, which read as unfinished next to the
- * content it frames. These tokens give it one warm neutral ground and a single indigo
- * accent, so pages look deliberate without every page inventing its own palette.
+ * One palette for the product, and it is the palette the client deck already uses: ink
+ * #0E2A38 for chrome, teal #17968F for anything actionable. The console and the pitch
+ * should not look like two different products.
+ *
+ * The accent is remapped through Tailwind's own indigo ramp rather than rewritten across
+ * every page. Twelve files reach for indigo-600 and friends; redefining the ramp here
+ * recolours all of them at once and leaves one place to change it again later.
  */
+@theme {
+  --color-indigo-50: #edfbf8;
+  --color-indigo-100: #d0f4ec;
+  --color-indigo-200: #a4e8dc;
+  --color-indigo-300: #6ed6c7;
+  --color-indigo-400: #37bcaf;
+  --color-indigo-500: #1da296;
+  --color-indigo-600: #17968f;
+  --color-indigo-700: #0f7873;
+  --color-indigo-800: #10605d;
+  --color-indigo-900: #114f4d;
+  --color-indigo-950: #04302f;
+}
+
 :root {
   color-scheme: light;
 
   /* Page ground: a hint of warmth stops large empty areas looking cold and washed out. */
-  --app-bg: #f6f7fb;
+  --app-bg: #f4f7f7;
   --app-panel: #ffffff;
-  --app-border: #e6e8f0;
-  /* Deep teal-slate: warmer than the near-black navy and it separates the chrome
-     from the indigo used for actions, so the active item actually stands out. */
-  --app-sidebar: #10233a;
-  --app-sidebar-hover: #1b3550;
-  --app-accent: #4f46e5;
+  --app-border: #dfe7e6;
+  /* Deep ink, straight from the deck. Dark and desaturated enough that the teal on top
+     of it reads as the one thing to click. */
+  --app-sidebar: #0e2a38;
+  --app-sidebar-hover: #17394b;
+  --app-accent: #17968f;
 }
 
 body {
@@ -35,20 +53,20 @@ body {
 /* Scrollbars: the default Windows bars are heavy and drew the eye away from content. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #cbd0e0 transparent;
+  scrollbar-color: #bcccc9 transparent;
 }
 *::-webkit-scrollbar {
   width: 9px;
   height: 9px;
 }
 *::-webkit-scrollbar-thumb {
-  background: #cbd0e0;
+  background: #bcccc9;
   border-radius: 999px;
   border: 2px solid transparent;
   background-clip: padding-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #aab1c7;
+  background: #9bb0ac;
   background-clip: padding-box;
 }
 *::-webkit-scrollbar-track {

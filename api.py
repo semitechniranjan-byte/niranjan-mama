@@ -1058,6 +1058,44 @@ async def set_dispositions(payload: DispositionsUpdateRequest) -> dict:
     return {"dispositions": data}
 
 
+@app.get("/template-placeholders")
+async def template_placeholders(
+    template_id: Optional[str] = None,
+    use_case: Optional[str] = None,
+    language: Optional[str] = None,
+) -> dict:
+    """The {PLACEHOLDER} names the chosen script actually uses.
+
+    A test call had one hardcoded CUSTOMER_NAME box, so every other placeholder in the
+    prompt went unfilled and reached the caller as a blank - "kya main  se baat kar rahi
+    hoon?". The form can only offer the right boxes if it knows what the script asks for,
+    and only the script knows that.
+    """
+    template = None
+    if template_id:
+        template = await handler.db.get_template(template_id)
+    if not template:
+        templates = await handler.db.list_templates()
+        template = templates[0] if templates else None
+    if not template:
+        return {"placeholders": []}
+
+    resolved = resolve_template_config(template, {}, language=language, use_case=use_case)
+    script = " ".join(str(resolved.get(k) or "") for k in ("system_prompt", "greeting_text"))
+    names: List[str] = []
+    seen = set()
+    for raw in re.findall(r"\{(\w+)\}", script):
+        key = raw.upper()
+        if key not in seen:
+            seen.add(key)
+            names.append(key)
+    return {
+        "placeholders": names,
+        "use_case": resolved.get("use_case"),
+        "language": resolved.get("language"),
+    }
+
+
 @app.get("/mapping-keys")
 async def get_mapping_keys() -> dict:
     return {"categories": await handler.db.get_mapping_keys()}
