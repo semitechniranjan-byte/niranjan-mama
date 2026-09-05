@@ -26,7 +26,12 @@ type HistoryEntry = {
   response: unknown;
 };
 
-type Field = { key: string; value: string };
+type Field = {
+  key: string;
+  value: string;
+  /** "script" fields belong to the selected prompt; "custom" ones the operator added. */
+  source: "script" | "custom";
+};
 
 /** CUSTOMER_NAME -> "Customer name", so the form reads as a form and not as a variable list. */
 function prettyKey(key: string): string {
@@ -113,7 +118,9 @@ export function Calls() {
   const phone = localNumber ? `+91${localNumber}` : "";
   const [useCase, setUseCase] = useState("");
   const [language, setLanguage] = useState("");
-  const [fields, setFields] = useState<Field[]>([{ key: "CUSTOMER_NAME", value: "" }]);
+  const [fields, setFields] = useState<Field[]>([
+    { key: "CUSTOMER_NAME", value: "", source: "script" },
+  ]);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
 
   // History is stored locally and only knows whether the call was accepted for dialling.
@@ -166,11 +173,18 @@ export function Calls() {
     if (!required.length) return;
     setFields((prev) => {
       const typed = new Map(prev.map((f) => [f.key.trim().toUpperCase(), f.value]));
-      const fromScript = required.map((key) => ({ key, value: typed.get(key) ?? "" }));
-      const extra = prev.filter(
-        (f) => f.key.trim() && !required.includes(f.key.trim().toUpperCase()),
+      const fromScript: Field[] = required.map((key) => ({
+        key,
+        value: typed.get(key) ?? "",
+        source: "script",
+      }));
+      // Only what the operator added by hand survives a change of use case. Keeping the
+      // previous script's placeholders left Real Estate's five keys sitting under
+      // E-commerce's three as empty rows that meant nothing to either.
+      const kept = prev.filter(
+        (f) => f.source === "custom" && !required.includes(f.key.trim().toUpperCase()),
       );
-      return [...fromScript, ...extra];
+      return [...fromScript, ...kept];
     });
     // required is rebuilt on every fetch; compare by content so this does not loop.
   }, [requiredKey]);
@@ -240,7 +254,7 @@ export function Calls() {
     setLocalNumber("");
     setUseCase("");
     setLanguage("");
-    setFields([{ key: "CUSTOMER_NAME", value: "" }]);
+    setFields([{ key: "CUSTOMER_NAME", value: "", source: "script" }]);
     setError(null);
   };
 
@@ -367,7 +381,7 @@ export function Calls() {
               )}
               <button
                 type="button"
-                onClick={() => setFields([...fields, { key: "", value: "" }])}
+                onClick={() => setFields([...fields, { key: "", value: "", source: "custom" }])}
                 className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
               >
                 Add Field
@@ -387,7 +401,7 @@ export function Calls() {
               return (
                 <div
                   key={`${key || "extra"}-${idx}`}
-                  className={wide || !fromScript ? "sm:col-span-2" : undefined}
+                  className={wide ? "sm:col-span-2" : undefined}
                 >
                   {fromScript ? (
                     <label className="block">
@@ -421,35 +435,34 @@ export function Calls() {
                       )}
                     </label>
                   ) : (
-                    <div className="flex items-end gap-2">
-                      <label className="flex-1 text-xs font-medium text-slate-600">
-                        Key
+                    <div>
+                      <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-500">
+                        Extra field
+                        {/* Only hand-added rows can go; the script's own are not optional and
+                            carry no button to look at. */}
+                        <button
+                          type="button"
+                          onClick={() => setFields(fields.filter((_, i) => i !== idx))}
+                          className="ml-auto rounded p-0.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                          title="Remove field"
+                        >
+                          <IconTrash size={13} />
+                        </button>
+                      </span>
+                      <div className="flex gap-2">
                         <input
                           value={f.key}
                           onChange={(e) => setField(idx, { key: e.target.value })}
-                          placeholder="ORDER_ID"
-                          className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                          placeholder="KEY_NAME"
+                          className="h-9 w-2/5 rounded-lg border border-slate-300 px-2.5 font-mono text-xs uppercase transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                         />
-                      </label>
-                      <label className="flex-1 text-xs font-medium text-slate-600">
-                        Value
                         <input
                           value={f.value}
                           onChange={(e) => setField(idx, { value: e.target.value })}
-                          placeholder="anything the prompt expects"
-                          className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
+                          placeholder="value"
+                          className="h-9 flex-1 rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
                         />
-                      </label>
-                      {/* Only the hand-added rows can go; the script's own are not optional,
-                          so they carry no disabled button to look at. */}
-                      <button
-                        type="button"
-                        onClick={() => setFields(fields.filter((_, i) => i !== idx))}
-                        className="mb-1 rounded-lg px-2 py-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
-                        title="Remove field"
-                      >
-                        <IconTrash size={14} />
-                      </button>
+                      </div>
                     </div>
                   )}
                 </div>
