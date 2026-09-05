@@ -3,6 +3,7 @@ import { DispositionBadge, maskPhone } from "../components/Disposition";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  downloadCallsCsv,
   endSession,
   getDispositions,
   getSession,
@@ -26,6 +27,18 @@ export function SessionDetail() {
     queryKey: ["session", sessionId],
     queryFn: () => getSession(sessionId),
   });
+
+  // One call as a row, in the same shape as the campaign and period reports, so a single
+  // outcome can be forwarded without exporting everything around it.
+  const [exporting, setExporting] = useState(false);
+  const exportOne = async () => {
+    setExporting(true);
+    try {
+      await downloadCallsCsv({ session_id: sessionId });
+    } finally {
+      setExporting(false);
+    }
+  };
   const { data: messages, refetch: refetchMessages } = useQuery({
     queryKey: ["session-messages", sessionId],
     queryFn: () => getSessionMessages(sessionId),
@@ -71,9 +84,18 @@ export function SessionDetail() {
           </button>
           {/* The number and the outcome are what someone opens this page for; the raw
               session id is plumbing and belongs underneath. */}
-          <h1 className="mt-1 font-mono text-xl font-semibold text-slate-900">
-            {maskPhone(session?.phone_number)}
-          </h1>
+          <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+            <h1 className="font-mono text-xl font-semibold text-slate-900">
+              {maskPhone(session?.phone_number)}
+            </h1>
+            <button
+              onClick={exportOne}
+              disabled={exporting}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+            >
+              {exporting ? "Building…" : "Download this call"}
+            </button>
+          </div>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {session?.active ? (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-semibold text-amber-800">

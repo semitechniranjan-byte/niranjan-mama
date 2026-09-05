@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDialog } from "../components/Dialog";
 import { createAgent, deleteAgent, listAgents, listDatasheets, updateAgent } from "../api/endpoints";
 import type { Agent } from "../api/types";
 import { IconPlus, IconTrash, IconUsers, IconX } from "../components/Icons";
@@ -166,6 +167,7 @@ function CapacityPlanner({ totalCapacity, avgSeconds }: { totalCapacity: number;
 }
 
 export function Agents() {
+  const dialog = useDialog();
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ["agents"],
@@ -299,7 +301,10 @@ export function Agents() {
                 </button>
                 <button
                   onClick={() => {
-                    if (window.confirm(`Delete agent "${a.name}"?`)) deleteMutation.mutate(a._id);
+                    void (async () => {
+                        if (await dialog.confirm(`Delete agent "${a.name}"?`, { danger: true }))
+                          deleteMutation.mutate(a._id);
+                      })();
                   }}
                   className="rounded-md border border-slate-200 px-2 py-1 text-slate-400 hover:border-red-200 hover:bg-red-50 hover:text-red-600"
                   title="Delete agent"

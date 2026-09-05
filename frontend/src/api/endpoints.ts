@@ -118,6 +118,10 @@ export type TemplatePayload = Omit<Template, "_id" | "created_at" | "updated_at"
 
 export const listTemplates = () =>
   api.get<{ templates: Template[] }>("/templates").then((r) => r.data.templates);
+/** Who the stored key belongs to, and what that role may open right now. */
+export const getMe = () =>
+  api.get<{ role: "admin" | "user"; email: string; pages: string[] }>("/auth/me").then((r) => r.data);
+
 export interface AnalyticsSummary {
   total: number;
   scored: number;
@@ -134,6 +138,10 @@ export type ReportFilters = {
   disposition?: string;
   direction?: string;
   search?: string;
+  /** One campaign: every call it placed carries its execution. */
+  execution_id?: string;
+  /** A single call. */
+  session_id?: string;
 };
 
 export const getAnalyticsSummary = (params: { date_from?: string; date_to?: string }) =>

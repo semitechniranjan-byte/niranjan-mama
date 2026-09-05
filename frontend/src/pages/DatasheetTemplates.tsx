@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import { useDialog } from "../components/Dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createDatasheetTemplate,
@@ -166,8 +167,9 @@ function RequiredColumnsCard({
   template: DatasheetTemplate;
   save: (payload: Partial<DatasheetTemplate>) => void;
 }) {
-  const addColumn = () => {
-    const name = window.prompt("New required column name")?.trim();
+  const dialog = useDialog();
+  const addColumn = async () => {
+    const name = (await dialog.prompt("New required column", { placeholder: "CUSTOMER_NAME" }))?.trim();
     if (!name || template.required_columns.includes(name)) return;
     save({ required_columns: [...template.required_columns, name] });
   };
@@ -670,24 +672,29 @@ function CategoryCard({
 }
 
 function MappingKeysTab() {
+  const dialog = useDialog();
   const { categories, isLoading, save } = useMappingKeys();
 
-  const addKey = (category: string) => {
-    const key = window.prompt(`New key for "${category}"`)?.trim();
+  const addKey = async (category: string) => {
+    const key = (await dialog.prompt(`New key in "${category}"`, { placeholder: "ptp_date" }))?.trim();
     if (!key || (categories[category] ?? []).includes(key)) return;
     save({ ...categories, [category]: [...(categories[category] ?? []), key] });
   };
   const removeKey = (category: string, key: string) => {
     save({ ...categories, [category]: (categories[category] ?? []).filter((k) => k !== key) });
   };
-  const deleteCategory = (category: string) => {
-    if (!window.confirm(`Delete category "${category}" and all its keys?`)) return;
+  const deleteCategory = async (category: string) => {
+    const ok = await dialog.confirm(`Delete category "${category}"?`, {
+      body: "Every key in it goes too.",
+      danger: true,
+    });
+    if (!ok) return;
     const next = { ...categories };
     delete next[category];
     save(next);
   };
-  const createCategory = () => {
-    const name = window.prompt("New category name (e.g. model_data, call_info)")?.trim();
+  const createCategory = async () => {
+    const name = (await dialog.prompt("New category", { placeholder: "model_data" }))?.trim();
     if (!name || categories[name]) return;
     save({ ...categories, [name]: [] });
   };
@@ -730,14 +737,15 @@ function MappingKeysTab() {
 }
 
 function TemplatesTab({ availablePaths }: { availablePaths: string[] }) {
+  const dialog = useDialog();
   const { templates, isLoading, createMutation, updateMutation, deleteMutation } = useDatasheetTemplates();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
 
   const editingTemplate = templates.find((t) => t._id === editingId) ?? null;
 
-  const handleCreate = () => {
-    const name = window.prompt("New template name")?.trim();
+  const handleCreate = async () => {
+    const name = (await dialog.prompt("New template name", { placeholder: "bajaj pdm" }))?.trim();
     if (!name) return;
     createMutation.mutate(
       { name, required_columns: [], update_columns_mapping: {} },
@@ -745,8 +753,12 @@ function TemplatesTab({ availablePaths }: { availablePaths: string[] }) {
     );
   };
 
-  const handleDelete = (t: DatasheetTemplate) => {
-    if (!window.confirm(`Delete template "${t.name}"? This cannot be undone.`)) return;
+  const handleDelete = async (t: DatasheetTemplate) => {
+    const ok = await dialog.confirm(`Delete template "${t.name}"?`, {
+      body: "This cannot be undone.",
+      danger: true,
+    });
+    if (!ok) return;
     deleteMutation.mutate(t._id);
     if (editingId === t._id) setEditingId(null);
   };
@@ -875,6 +887,7 @@ function TemplatesTab({ availablePaths }: { availablePaths: string[] }) {
 }
 
 function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
+  const dialog = useDialog();
   const queryClient = useQueryClient();
   const { data: datasheets, isLoading } = useQuery({ queryKey: ["datasheets"], queryFn: listDatasheets });
 
@@ -920,8 +933,8 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
     uploadMutation.mutate();
   };
 
-  const handleRename = (ds: Datasheet) => {
-    const next = window.prompt("Rename datasheet", ds.name)?.trim();
+  const handleRename = async (ds: Datasheet) => {
+    const next = (await dialog.prompt("Rename datasheet", { defaultValue: ds.name }))?.trim();
     if (!next || next === ds.name) return;
     renameMutation.mutate({ id: ds._id, name: next });
   };

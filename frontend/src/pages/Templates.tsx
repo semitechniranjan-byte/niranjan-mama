@@ -9,6 +9,7 @@ import {
 } from "../api/endpoints";
 import type { LanguageConfig, Template, UseCase } from "../api/types";
 import { getApiUrl } from "../api/client";
+import { useDialog } from "../components/Dialog";
 
 function useSingleTemplate() {
   const queryClient = useQueryClient();
@@ -157,6 +158,7 @@ function VoiceMatrixCard({
   save: (payload: Partial<Template>) => void;
   labelFor: (k: string) => string;
 }) {
+  const dialog = useDialog();
   const useCases = template.use_cases ?? {};
   const useCaseKeys = Object.keys(useCases);
   const languageKeys = Array.from(
@@ -184,8 +186,11 @@ function VoiceMatrixCard({
     setDrafts({});
   };
 
-  const applyToRow = (uc: string) => {
-    const source = window.prompt(`Set one voice ID for every language in "${useCases[uc]?.label || uc}"`);
+  const applyToRow = async (uc: string) => {
+    const source = await dialog.prompt(
+      `Set one voice ID for every language in "${useCases[uc]?.label || uc}"`,
+      { placeholder: "Cartesia voice ID" },
+    );
     if (source === null) return;
     const next = { ...drafts };
     for (const lang of Object.keys(useCases[uc]?.languages ?? {})) next[cellKey(uc, lang)] = source.trim();
@@ -281,6 +286,7 @@ function LanguageRoutingCard({
   save: (payload: Partial<Template>) => void;
   languageKeys: string[];
 }) {
+  const dialog = useDialog();
   const [column, setColumn] = useState(template.language_column ?? "");
   const { data: datasheets } = useQuery({ queryKey: ["datasheets"], queryFn: listDatasheets });
 
@@ -294,8 +300,10 @@ function LanguageRoutingCard({
 
   const mapping = template.language_column_mapping ?? {};
 
-  const addMapping = () => {
-    const value = window.prompt("Column value in the datasheet (e.g. TAMIL)")?.trim().toUpperCase();
+  const addMapping = async () => {
+    const value = (await dialog.prompt("Column value in the datasheet", {
+      placeholder: "TAMIL",
+    }))?.trim().toUpperCase();
     if (!value) return;
     save({ language_column_mapping: { ...mapping, [value]: languageKeys[0] ?? "hindi" } });
   };
@@ -398,6 +406,7 @@ function LanguageRoutingCard({
 }
 
 export function Templates() {
+  const dialog = useDialog();
   const { template, isLoading, saveMutation, loadError } = useSingleTemplate();
   const { data: supported } = useQuery({ queryKey: ["languages"], queryFn: listSupportedLanguages });
 
@@ -426,8 +435,10 @@ export function Templates() {
 
   const writeUseCases = (next: Record<string, UseCase>) => save({ use_cases: next });
 
-  const addUseCase = () => {
-    const label = window.prompt("New use case name (e.g. Sales Bot, Survey)")?.trim();
+  const addUseCase = async () => {
+    const label = (await dialog.prompt("New use case name", {
+      placeholder: "Sales Bot",
+    }))?.trim();
     if (!label) return;
     const key = label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
     if (!key || useCases[key]) return;
@@ -438,8 +449,12 @@ export function Templates() {
     setUseCaseKey(key);
   };
 
-  const deleteUseCase = (key: string) => {
-    if (!window.confirm(`Delete use case "${useCases[key]?.label || key}" and all its languages?`)) return;
+  const deleteUseCase = async (key: string) => {
+    const ok = await dialog.confirm(`Delete use case "${useCases[key]?.label || key}"?`, {
+      body: "Every language configured under it goes too.",
+      danger: true,
+    });
+    if (!ok) return;
     const next = { ...useCases };
     delete next[key];
     writeUseCases(next);
@@ -462,9 +477,9 @@ export function Templates() {
     setLanguageKey(langKey);
   };
 
-  const removeLanguage = (langKey: string) => {
+  const removeLanguage = async (langKey: string) => {
     if (!activeUseCase) return;
-    if (!window.confirm(`Remove "${langKey}" from this use case?`)) return;
+    if (!(await dialog.confirm(`Remove "${langKey}" from this use case?`, { danger: true }))) return;
     const languages = { ...activeUseCase.languages };
     delete languages[langKey];
     writeUseCases({ ...useCases, [useCaseKey]: { ...activeUseCase, languages } });

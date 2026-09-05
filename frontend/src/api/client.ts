@@ -41,6 +41,11 @@ export function getPages(): string[] {
   }
 }
 
+/** Replace the stored page list, for when the server reports a different one. */
+export function setPages(pages: string[]): void {
+  localStorage.setItem(PAGES_KEY, JSON.stringify(pages));
+}
+
 export function setSession(token: string, role: Role, email: string, pages: string[]): void {
   localStorage.setItem(API_URL_KEY, getApiUrl());
   localStorage.setItem(API_KEY_KEY, token);

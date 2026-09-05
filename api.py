@@ -84,7 +84,10 @@ ROLE_PAGES = {
     ],
     # Conversations is where transcripts and outcomes live, which is the whole point of
     # the product for a collections operator. Config, prompts and agents stay admin-only.
-    "user": ["/", "/campaigns", "/sessions", "/calls", "/datasheets", "/reports"],
+    "user": [
+        "/", "/campaigns", "/sessions", "/calls",
+        "/datasheets", "/reports", "/analytics",
+    ],
 }
 
 
@@ -131,6 +134,25 @@ async def auth_login(payload: LoginRequest) -> dict:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     return {"token": token, "role": role, "email": email, "pages": ROLE_PAGES[role]}
+
+
+@app.get("/auth/me")
+async def auth_me(x_api_key: Optional[str] = Header(None)) -> dict:
+    """Role and allowed pages for the key presented.
+
+    The console stored its page list once, at sign-in, so a page added to the product
+    later stayed invisible until the operator happened to sign out and back in - Reports
+    shipped, was live on the server, and nobody could find it. Reading this on load means
+    a new page appears by itself on the next visit.
+    """
+    token = (x_api_key or "").strip()
+    if token and secrets.compare_digest(token, ADMIN_TOKEN):
+        role, email = "admin", ADMIN_EMAIL
+    elif token and secrets.compare_digest(token, USER_TOKEN):
+        role, email = "user", USER_EMAIL
+    else:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    return {"role": role, "email": email, "pages": ROLE_PAGES[role]}
 
 
 async def _initialize_analysis_support() -> None:
@@ -1081,8 +1103,15 @@ def _session_window(date_from: Optional[str], date_to: Optional[str]) -> dict:
 def _report_query(
     date_from: Optional[str], date_to: Optional[str],
     disposition: Optional[str], direction: Optional[str], search: Optional[str],
+    execution_id: Optional[str] = None, session_id: Optional[str] = None,
 ) -> dict:
     query: dict = dict(_session_window(date_from, date_to))
+    # A campaign records an execution, and every call it places carries that execution on
+    # the session, so one campaign's calls are exactly the sessions that share it.
+    if execution_id:
+        query["execution_id"] = execution_id
+    if session_id:
+        query["session_id"] = session_id
     if disposition and disposition != "all":
         query["disposition_code"] = disposition.upper()
     if direction and direction != "all":
@@ -1144,6 +1173,8 @@ async def report_calls_csv(
     disposition: Optional[str] = None,
     direction: Optional[str] = None,
     search: Optional[str] = None,
+    execution_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     limit: int = 5000,
 ) -> Response:
     """Every call in the window as a spreadsheet.
@@ -1151,7 +1182,9 @@ async def report_calls_csv(
     A client asks for the result of a campaign as a file they can open and forward, and
     until now the only way to get one was to read the console screen by screen.
     """
-    query = _report_query(date_from, date_to, disposition, direction, search)
+    query = _report_query(
+        date_from, date_to, disposition, direction, search, execution_id, session_id
+    )
     sessions = await handler.db.sessions.find(query).sort("created_at", -1).to_list(
         max(1, min(limit, 50000))
     )

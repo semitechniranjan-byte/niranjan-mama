@@ -3,7 +3,14 @@ import { useNavigate, useParams, Link } from "react-router-dom";
 import { IconPhone, IconPulse, IconCheck, IconClock, IconHourglass, IconX, IconMessage, IconChart } from "../components/Icons";
 import { DispositionCard } from "../components/Disposition";
 import { useQuery } from "@tanstack/react-query";
-import { getCampaign, getDispositions, getSession, getSessionMessages, getTemplate } from "../api/endpoints";
+import {
+  downloadCallsCsv,
+  getCampaign,
+  getDispositions,
+  getSession,
+  getSessionMessages,
+  getTemplate,
+} from "../api/endpoints";
 import type { DatasheetRow } from "../api/types";
 
 const STATUS_DOT: Record<string, string> = {
@@ -111,6 +118,36 @@ export function CampaignDetail() {
     enabled: !!selectedRow?.session_id,
   });
 
+  const [exporting, setExporting] = useState(false);
+  const [exportNote, setExportNote] = useState<string | null>(null);
+
+  /**
+   * The full report for this campaign, built server-side.
+   *
+   * The sheet-row export below carries only what was uploaded plus a status; the report
+   * carries what the calls produced - promise date and amount, cooperation, duration, and
+   * a quote of what the customer said - and is written with a BOM so Excel reads the
+   * Devanagari. Campaigns stamp their execution on every call they place, so that is
+   * exactly this campaign's calls.
+   */
+  const exportReport = async () => {
+    const execution = campaign?.execution_id;
+    if (!execution) {
+      setExportNote("This campaign has no calls recorded against it yet.");
+      return;
+    }
+    setExporting(true);
+    setExportNote(null);
+    try {
+      const bytes = await downloadCallsCsv({ execution_id: execution });
+      setExportNote(`Downloaded ${(bytes / 1024).toFixed(0)} KB`);
+    } catch (err) {
+      setExportNote(`Could not build the report: ${(err as Error).message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const exportCsv = () => {
     if (filteredRows.length === 0) return;
     const cols = Array.from(new Set(filteredRows.flatMap((r) => Object.keys(r.data ?? {}))));
@@ -137,7 +174,18 @@ export function CampaignDetail() {
         <button onClick={() => navigate(-1)} className="text-sm text-slate-500 hover:underline">
           Back
         </button>
-        <h1 className="mt-1 text-xl font-semibold text-slate-900">{campaign?.name}</h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
+          <h1 className="text-xl font-semibold text-slate-900">{campaign?.name}</h1>
+          <button
+            onClick={exportReport}
+            disabled={exporting}
+            className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+          >
+            <IconChart size={13} />
+            {exporting ? "Building…" : "Download report"}
+          </button>
+        </div>
+        {exportNote && <p className="mt-1 text-xs text-slate-500">{exportNote}</p>}
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
