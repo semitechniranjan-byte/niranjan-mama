@@ -256,6 +256,27 @@ export const adoptMappingKeys = (sample = 200) =>
     )
     .then((r) => r.data);
 
+/** The outcomes each script defines, against the list that is configured. */
+export const dispositionsFromScripts = () =>
+  api
+    .get<{
+      configured: number;
+      use_cases: {
+        use_case: string;
+        codes: { code: string; label: string; known: boolean }[];
+        missing: string[];
+      }[];
+    }>("/dispositions/from-scripts")
+    .then((r) => r.data);
+
+/** Add the outcomes the scripts define, and tag the existing ones to their scripts. */
+export const adoptDispositionsFromScripts = () =>
+  api
+    .post<{ added: unknown[]; tagged: number; total: number }>(
+      "/dispositions/adopt-from-scripts",
+    )
+    .then((r) => r.data);
+
 /** Who the stored key belongs to, and what that role may open right now. */
 export const getMe = () =>
   api.get<{ role: "admin" | "user"; email: string; pages: string[] }>("/auth/me").then((r) => r.data);

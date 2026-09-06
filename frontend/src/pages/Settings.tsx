@@ -15,6 +15,7 @@ import {
 } from "../components/Icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  adoptDispositionsFromScripts,
   getAppSettings,
   getDispositions,
   getHealth,
@@ -272,9 +273,33 @@ function DispositionsEditor() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["dispositions"] }),
   });
 
-  const updateRow = (idx: number, field: keyof Disposition, value: string) => {
+  const updateRow = (
+    idx: number,
+    field: keyof Disposition,
+    value: string | string[],
+  ) => {
     setRows(rows.map((r, i) => (i === idx ? { ...r, [field]: value } : r)));
   };
+
+  // The scripts write their outcome tables out in full, so the list can be read from them
+  // rather than kept by hand.
+  const [importing, setImporting] = useState(false);
+  const importFromScripts = async () => {
+    setImporting(true);
+    try {
+      const res = await adoptDispositionsFromScripts();
+      const fresh = await getDispositions();
+      setRows(fresh);
+      setImportNote(
+        `Added ${res.added.length}, tagged ${res.tagged} to their scripts. ${res.total} outcomes now.`,
+      );
+    } catch (err) {
+      setImportNote((err as Error).message);
+    } finally {
+      setImporting(false);
+    }
+  };
+  const [importNote, setImportNote] = useState<string | null>(null);
   const removeRow = (idx: number) => setRows(rows.filter((_, i) => i !== idx));
   const addRow = () => setRows([...rows, { value: "", color: COLOR_OPTIONS[0], label: "" }]);
 
@@ -283,16 +308,27 @@ function DispositionsEditor() {
       Icon={IconPlug}
       accent="bg-purple-50 text-purple-600"
       title="Disposition codes"
-      subtitle="Call outcomes returned by the analysis step; also colour the badges on a dialler run."
+      subtitle="Call outcomes the analysis returns. A code with no scripts named is offered to every script; naming them keeps a collections outcome out of a real-estate call."
       action={
-        <button
-          onClick={addRow}
-          className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-        >
-          Add
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={importFromScripts}
+            disabled={importing}
+            title="Read the outcomes each script defines and add the ones missing here"
+            className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+          >
+            {importing ? "Reading…" : "Import from scripts"}
+          </button>
+          <button
+            onClick={addRow}
+            className="rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            Add
+          </button>
+        </div>
       }
     >
+      {importNote && <p className="mb-2 text-xs text-slate-500">{importNote}</p>}
       <div className="space-y-2">
         {rows.map((row, idx) => (
           <div
@@ -311,6 +347,22 @@ function DispositionsEditor() {
               onChange={(e) => updateRow(idx, "label", e.target.value)}
               placeholder="Promise To Pay"
               className="flex-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm"
+            />
+            <input
+              value={(row.use_cases ?? []).join(", ")}
+              onChange={(e) =>
+                updateRow(
+                  idx,
+                  "use_cases",
+                  e.target.value
+                    .split(",")
+                    .map((x) => x.trim())
+                    .filter(Boolean),
+                )
+              }
+              placeholder="every script"
+              title="Scripts this outcome belongs to, comma separated. Blank means all of them."
+              className="w-52 rounded-lg border border-slate-300 px-2.5 py-1.5 font-mono text-[11px]"
             />
             <select
               value={row.color}

@@ -193,6 +193,8 @@ export interface Disposition {
   value: string;
   color: string;
   label: string;
+  /** Scripts this outcome belongs to. Empty means every script. */
+  use_cases?: string[];
 }
 
 export type MappingKeyCategories = Record<string, string[]>;

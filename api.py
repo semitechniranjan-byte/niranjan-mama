@@ -410,6 +410,11 @@ class DispositionItem(BaseModel):
     value: str
     color: str
     label: str
+    # Which scripts this outcome belongs to. Empty means every one, which is what the
+    # twenty-six existing codes are: they were written for collections and then inherited
+    # by the real-estate, delivery and salon scripts, which return outcomes of their own
+    # that nothing here recognises.
+    use_cases: list[str] = []
 
 
 class DispositionsUpdateRequest(BaseModel):
@@ -1416,8 +1421,119 @@ async def delete_datasheet_template(datasheet_template_id: str) -> dict:
     return {"status": "deleted", "datasheet_template_id": datasheet_template_id}
 
 
+# How an analysis prompt writes its outcome table. Both shapes appear across the scripts
+# in this deployment.
+_CODE_TABLE_ROW = re.compile(r"^\s*\|\s*([A-Z][A-Z0-9_]{1,7})\s*\|\s*([^|]{4,120}?)\s*\|", re.M)
+
+
+def _codes_in_prompt(prompt: str) -> Dict[str, str]:
+    """The outcome codes an analysis prompt defines, with the wording it defines them by.
+
+    Only table rows count. A looser pattern was tried and produced mostly noise: a prompt
+    is full of shouted section headings - INTERRUPTIONS, IMPORTANT, TIMING - which look
+    exactly like a code alone on a line. A row inside the table is unambiguous, and a
+    script that writes no table is reported as defining nothing rather than having its
+    headings turned into outcomes.
+    """
+    found: Dict[str, str] = {}
+    for code, label in _CODE_TABLE_ROW.findall(prompt or ""):
+        cleaned = label.strip().rstrip(".").strip()
+        # The separator row (|------|------|) has the shape but says nothing.
+        if cleaned and not set(cleaned) <= set("-=_ ") and code not in found:
+            found[code] = cleaned
+    return found
+
+
+@app.get("/dispositions/from-scripts")
+async def dispositions_from_scripts() -> dict:
+    """The outcomes each script actually defines, against the list that is configured.
+
+    The configured list is one vertical's vocabulary, kept by hand, and the scripts have
+    moved past it: real estate returns SV for a site visit and salon returns BK for a
+    booking, neither of which anything here recognises, so they reach a client's report as
+    a bare code with no label. The scripts write these tables out in full - the meaning is
+    already there to be read rather than typed.
+    """
+    configured = await handler.db.get_dispositions()
+    known = {str(d.get("value") or "").upper(): d for d in configured}
+
+    templates = await handler.db.list_templates()
+    template = templates[0] if templates else {}
+    per_use_case = []
+    for use_case, cfg in (template.get("use_cases") or {}).items():
+        codes: Dict[str, str] = {}
+        for entry in (cfg.get("languages") or {}).values():
+            codes.update(_codes_in_prompt((entry or {}).get("analysis_prompt") or ""))
+        if not codes:
+            continue
+        per_use_case.append({
+            "use_case": use_case,
+            "codes": [
+                {"code": c, "label": label, "known": c in known}
+                for c, label in sorted(codes.items())
+            ],
+            "missing": sorted(c for c in codes if c not in known),
+        })
+
+    return {"use_cases": per_use_case, "configured": len(configured)}
+
+
+@app.post("/dispositions/adopt-from-scripts", dependencies=[Depends(require_admin)])
+async def adopt_dispositions_from_scripts() -> dict:
+    """Add the outcomes the scripts define and the list does not, tagged to their script."""
+    found = await dispositions_from_scripts()
+    configured = await handler.db.get_dispositions()
+    known = {str(d.get("value") or "").upper() for d in configured}
+
+    # A code several scripts define belongs to all of them, so the tags are collected
+    # before anything is written rather than the last script winning.
+    labels: Dict[str, str] = {}
+    owners: Dict[str, List[str]] = {}
+    for entry in found["use_cases"]:
+        for item in entry["codes"]:
+            if item["code"] in known:
+                continue
+            labels.setdefault(item["code"], item["label"])
+            owners.setdefault(item["code"], []).append(entry["use_case"])
+
+    added = [
+        {
+            "value": code,
+            "label": labels[code][:80],
+            "color": "bg-slate-500",
+            "use_cases": sorted(set(owners[code])),
+        }
+        for code in sorted(labels)
+    ]
+
+    # Tag what is already there, too. Without this the twenty-six existing codes carry no
+    # script and so appear under every one - real estate was being offered PTP and FPTP,
+    # which belong to collecting a payment and mean nothing when selling a flat. Each
+    # script names the outcomes it can return, so that is where the tags come from. A code
+    # no script names keeps an empty tag and stays available everywhere, which is the safe
+    # reading of "we do not know".
+    declared: Dict[str, List[str]] = {}
+    for entry in found["use_cases"]:
+        for item in entry["codes"]:
+            declared.setdefault(item["code"], []).append(entry["use_case"])
+
+    tagged = 0
+    updated = []
+    for item in configured:
+        code = str(item.get("value") or "").upper()
+        owners_for_code = sorted(set(declared.get(code, [])))
+        if owners_for_code and item.get("use_cases") != owners_for_code:
+            item = {**item, "use_cases": owners_for_code}
+            tagged += 1
+        updated.append(item)
+
+    if added or tagged:
+        await handler.db.set_dispositions(updated + added)
+    return {"added": added, "tagged": tagged, "total": len(updated) + len(added)}
+
+
 @app.get("/dispositions")
-async def get_dispositions(check_unknown: bool = False) -> dict:
+async def get_dispositions(check_unknown: bool = False, use_case: Optional[str] = None) -> dict:
     """The configured outcome codes, and optionally the ones calls returned anyway.
 
     The list is one vertical's vocabulary - twenty-six codes, all about collecting a
@@ -1428,18 +1544,34 @@ async def get_dispositions(check_unknown: bool = False) -> dict:
     data. Asking for it says so.
     """
     configured = await handler.db.get_dispositions()
+    if use_case:
+        # An outcome with no scripts named belongs to all of them; one that names some is
+        # only offered where it means something.
+        configured = [
+            d for d in configured
+            if not d.get("use_cases") or use_case in (d.get("use_cases") or [])
+        ]
     payload: dict = {"dispositions": configured}
     if check_unknown:
-        known = {str(d.get("value") or "").upper() for d in configured}
+        known = {str(d.get("value") or "").upper() for d in await handler.db.get_dispositions()}
+        # Count per script, so an outcome missing from real estate is not hidden by the
+        # collections codes sitting next to it.
         rows = await handler.db.sessions.aggregate([
             {"$match": {"disposition_code": {"$nin": [None, ""]}}},
-            {"$group": {"_id": "$disposition_code", "count": {"$sum": 1}}},
+            {"$group": {
+                "_id": {"code": "$disposition_code", "use_case": "$use_case"},
+                "count": {"$sum": 1},
+            }},
             {"$sort": {"count": -1}},
-        ]).to_list(100)
+        ]).to_list(200)
         payload["unknown"] = [
-            {"code": r["_id"], "count": r["count"]}
+            {
+                "code": r["_id"]["code"],
+                "use_case": r["_id"].get("use_case"),
+                "count": r["count"],
+            }
             for r in rows
-            if str(r["_id"]).upper() not in known
+            if str(r["_id"]["code"]).upper() not in known
         ]
     return payload
 
