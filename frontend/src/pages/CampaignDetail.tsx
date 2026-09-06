@@ -23,6 +23,7 @@ const STATUS_DOT: Record<string, string> = {
   paused: "bg-blue-500",
   stopping: "bg-orange-500",
   stopped: "bg-slate-500",
+  interrupted: "bg-slate-500",
   completed: "bg-emerald-500",
   failed: "bg-red-500",
 };
@@ -132,18 +133,26 @@ export function CampaignDetail() {
       const fn = { pause: pauseCampaign, resume: resumeCampaign, stop: stopCampaign, rerun: launchCampaign }[action];
       return fn(id!);
     },
-    onSuccess: (_d, v) => {
+    onSuccess: (data: { was_running?: boolean }, v) => {
       setControlNote(
-        {
-          pause: "Paused. Calls already on the line will finish.",
-          resume: "Going again from where it stopped.",
-          stop: "Stopping. Rows not yet dialled stay queued for a re-run.",
-          rerun: "Started again — the rows that were left will be called.",
-        }[v.action],
+        v.action === "stop" && data?.was_running === false
+          ? "Nothing was dialling — the run has been cleared. Use Run again to call the rows that were left."
+          : {
+              pause: "Paused. Calls already on the line will finish.",
+              resume: "Going again from where it stopped.",
+              stop: "Stopping. Rows not yet dialled stay queued for a re-run.",
+              rerun: "Started again — the rows that were left will be called.",
+            }[v.action],
       );
       queryClient.invalidateQueries({ queryKey: ["campaign", id] });
     },
-    onError: (err: Error) => setControlNote(err.message),
+    // Axios reports "Request failed with status code 409" and buries the sentence that
+    // explains what to do about it.
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data
+        ?.detail;
+      setControlNote(detail || (err as Error).message);
+    },
   });
 
   const [exporting, setExporting] = useState(false);

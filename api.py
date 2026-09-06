@@ -157,6 +157,27 @@ async def auth_me(x_api_key: Optional[str] = Header(None)) -> dict:
     return {"role": role, "email": email, "pages": ROLE_PAGES[role]}
 
 
+async def _release_stale_campaigns() -> None:
+    """Nothing survives a restart, so no record may still claim to be dialling.
+
+    The runner keeps its live set in memory. After a restart that set is empty while the
+    records still read "running", so the console offered Pause and Stop on a run nothing
+    was working on and every press failed. One campaign had sat like that since August.
+    """
+    try:
+        result = await handler.db.campaigns.update_many(
+            {"status": {"$in": ["running", "paused", "stopping"]}},
+            {"$set": {"status": "interrupted"}},
+        )
+        if result.modified_count:
+            logger.warning(
+                "CONFIG: released %s campaign(s) left mid-run by the last shutdown",
+                result.modified_count,
+            )
+    except Exception as exc:
+        logger.warning("Could not release stale campaigns: %s", exc)
+
+
 async def _initialize_analysis_support() -> None:
     init_analyze_sessions(handler.db, handler.db.get_conversation_history_route)
 
@@ -204,6 +225,7 @@ def _log_configuration_report() -> None:
 @app.on_event("startup")
 async def startup() -> None:
     _log_configuration_report()
+    await _release_stale_campaigns()
     await handler.initialize(persist_session=False)
     await _initialize_analysis_support()
 
@@ -1874,7 +1896,11 @@ async def pause_campaign(campaign_id: str) -> dict:
     if not await handler.db.get_campaign(campaign_id):
         raise HTTPException(status_code=404, detail="campaign not found")
     if not campaign_service.is_campaign_running(campaign_id):
-        raise HTTPException(status_code=409, detail="that run is not going")
+        raise HTTPException(
+            status_code=409,
+            detail="Nothing is dialling for this run right now. Use Stop to clear it, "
+                   "then Run again to pick up the rows that were left.",
+        )
     campaign_service.set_control_state(campaign_id, campaign_service.PAUSED)
     await handler.db.update_campaign(campaign_id, status="paused")
     return {"status": "paused", "campaign_id": campaign_id}
@@ -1886,7 +1912,11 @@ async def resume_campaign(campaign_id: str) -> dict:
     if not await handler.db.get_campaign(campaign_id):
         raise HTTPException(status_code=404, detail="campaign not found")
     if not campaign_service.is_campaign_running(campaign_id):
-        raise HTTPException(status_code=409, detail="that run is no longer going")
+        raise HTTPException(
+            status_code=409,
+            detail="That run is no longer going. Use Run again to start it from where it "
+                   "stopped.",
+        )
     campaign_service.set_control_state(campaign_id, campaign_service.RUNNING)
     await handler.db.update_campaign(campaign_id, status="running")
     return {"status": "running", "campaign_id": campaign_id}
@@ -1894,14 +1924,21 @@ async def resume_campaign(campaign_id: str) -> dict:
 
 @app.post("/campaigns/{campaign_id}/stop", dependencies=[Depends(require_api_key)])
 async def stop_campaign(campaign_id: str) -> dict:
-    """Stop dialling. Calls in progress finish; untouched rows stay queued for a re-run."""
+    """Stop dialling. Calls in progress finish; untouched rows stay queued for a re-run.
+
+    This works whether or not anything is actually dialling. A run whose process died -
+    the service restarted, say - leaves the record saying "running" forever, and refusing
+    to stop it would leave no way out of a row of buttons that all fail.
+    """
     if not await handler.db.get_campaign(campaign_id):
         raise HTTPException(status_code=404, detail="campaign not found")
-    if not campaign_service.is_campaign_running(campaign_id):
-        raise HTTPException(status_code=409, detail="that run is not going")
-    campaign_service.set_control_state(campaign_id, campaign_service.STOPPED)
-    await handler.db.update_campaign(campaign_id, status="stopping")
-    return {"status": "stopping", "campaign_id": campaign_id}
+    live = campaign_service.is_campaign_running(campaign_id)
+    if live:
+        campaign_service.set_control_state(campaign_id, campaign_service.STOPPED)
+        await handler.db.update_campaign(campaign_id, status="stopping")
+        return {"status": "stopping", "campaign_id": campaign_id, "was_running": True}
+    await handler.db.update_campaign(campaign_id, status="stopped")
+    return {"status": "stopped", "campaign_id": campaign_id, "was_running": False}
 
 
 @app.get("/campaigns")
