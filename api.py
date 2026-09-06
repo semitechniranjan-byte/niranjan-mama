@@ -1145,6 +1145,16 @@ ROOT_MAPPABLE = {
     "recording_url", "recording_id",
 }
 
+# What a collections desk reads off a report. A new format starts with these rather than
+# every field calls produce - fifty-one columns is a spreadsheet nobody scrolls, and the
+# Suggest button on the format adds the rest when somebody wants them.
+DEFAULT_RESULT_FIELDS = [
+    "disposition_code", "summary", "customer_said", "ptp_date", "ptp_time", "ptp_amt",
+    "ptp_days", "ptp_flag", "paid_flag", "user_cooperation_level", "status_reason_code",
+    "refusal_reason", "language_detected", "interruption_count", "call_uuid",
+    "recording_url", "execution_id", "session_id",
+]
+
 MAPPING_ALIASES: Dict[str, str] = {
     "PHONE": "phone_number",
     "MOBILE": "phone_number",
@@ -1229,6 +1239,106 @@ async def suggest_column_mappings(
         "already_mapped": len(existing),
         "sampled": discovered["sampled"],
         "suggestions": suggestions,
+    }
+
+
+def _normalise_column(name: str) -> str:
+    """CUSTOMER_NAME, "Customer Name" and "customer-name" are the same column."""
+    return re.sub(r"[^0-9A-Za-z]+", "_", str(name or "").strip()).strip("_").upper()
+
+
+@app.post("/datasheet-templates/plan")
+async def plan_datasheet_template(
+    file: UploadFile = File(...),
+    use_case: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+    template_id: Optional[str] = Form(None),
+    sample: int = Form(200),
+    min_coverage: int = Form(70),
+) -> dict:
+    """Everything a list format needs, worked out from the file and the script together.
+
+    Three things had to be lined up by hand and each was written somewhere that already
+    knew the answer: the columns come from the file's header row, the placeholders the
+    agent will speak come from the chosen script, and the fields worth writing back come
+    from what real calls produce. Matching them is a rule - "Customer Name" satisfies
+    {CUSTOMER_NAME} - so it is applied rather than typed.
+
+    Nothing is saved here. This reports what the format would be, including which
+    placeholders the file cannot fill, because a missing one is spoken to the customer as
+    a gap and is better seen before the calls go out than after.
+    """
+    content = await file.read()
+    try:
+        columns, rows = parse_datasheet_file(file.filename or "", content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    by_normal = {_normalise_column(c): c for c in columns if str(c).strip()}
+
+    # What the script will try to say.
+    placeholders = await template_placeholders(
+        template_id=template_id, use_case=use_case, language=language
+    )
+    matched, missing = [], []
+    for name in placeholders["placeholders"]:
+        column = by_normal.get(_normalise_column(name))
+        (matched if column else missing).append(
+            {"placeholder": name, "column": column} if column else {"placeholder": name}
+        )
+
+    phone_words = ("mobile", "phone", "contact", "number", "msisdn", "cell")
+    phone_column = next(
+        (c for c in columns if any(w in str(c).lower() for w in phone_words)), None
+    )
+
+    # What the calls will produce and put back in the sheet. Only the fields a desk reads,
+    # and only those these calls actually fill in.
+    discovered = await discover_mapping_keys(sample=sample)
+    where: Dict[str, str] = {}
+    coverage: Dict[str, int] = {}
+    for entry in discovered["categories"]:
+        for key in entry["keys"]:
+            name = str(key["key"])
+            where.setdefault(
+                name, name if entry["category"] == "root" else f"{entry['category']}.{name}"
+            )
+            coverage.setdefault(name, key["coverage"])
+
+    mapping: Dict[str, str] = {}
+    for name in DEFAULT_RESULT_FIELDS:
+        if name in where and coverage.get(name, 0) >= min_coverage:
+            mapping[name.upper()] = where[name]
+    for column, path in MAPPING_ALIASES.items():
+        if column in by_normal:
+            mapping.setdefault(column, path)
+
+    # A variant with no script cannot place a call, and choosing the language implicitly
+    # is how you end up there: real_estate has an english script and an empty hindi one,
+    # and asking for neither resolves to hindi.
+    resolved_script = ""
+    templates = await handler.db.list_templates()
+    if templates:
+        chosen = None
+        if template_id:
+            chosen = await handler.db.get_template(template_id)
+        chosen = chosen or templates[0]
+        resolved_script = (
+            resolve_template_config(chosen, {}, language=language, use_case=use_case) or {}
+        ).get("system_prompt") or ""
+
+    return {
+        "filename": file.filename,
+        "rows": len(rows),
+        "script_configured": bool(resolved_script.strip()),
+        "required_columns": [_normalise_column(c) for c in columns if str(c).strip()],
+        "phone_column": phone_column,
+        "use_case": placeholders.get("use_case"),
+        "language": placeholders.get("language"),
+        "placeholders_matched": matched,
+        "placeholders_missing": [m["placeholder"] for m in missing],
+        "update_columns_mapping": mapping,
+        "sampled_calls": discovered["sampled"],
     }
 
 

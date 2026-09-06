@@ -129,6 +129,38 @@ export type TemplatePayload = Omit<Template, "_id" | "created_at" | "updated_at"
 
 export const listTemplates = () =>
   api.get<{ templates: Template[] }>("/templates").then((r) => r.data.templates);
+export interface FormatPlan {
+  filename: string;
+  rows: number;
+  script_configured: boolean;
+  required_columns: string[];
+  phone_column: string | null;
+  use_case?: string;
+  language?: string;
+  placeholders_matched: { placeholder: string; column: string }[];
+  placeholders_missing: string[];
+  update_columns_mapping: Record<string, string>;
+  sampled_calls: number;
+}
+
+/**
+ * Work out a whole list format from a file and a script.
+ *
+ * Nothing is saved: this reports what the format would be, including any placeholder the
+ * file cannot fill, which the caller would otherwise hear as a gap mid-sentence.
+ */
+export const planDatasheetTemplate = (
+  file: File,
+  opts: { use_case?: string; language?: string; template_id?: string },
+) => {
+  const form = new FormData();
+  form.append("file", file);
+  if (opts.use_case) form.append("use_case", opts.use_case);
+  if (opts.language) form.append("language", opts.language);
+  if (opts.template_id) form.append("template_id", opts.template_id);
+  return api.post<FormatPlan>("/datasheet-templates/plan", form).then((r) => r.data);
+};
+
 export interface MappingSuggestion {
   column: string;
   path: string;

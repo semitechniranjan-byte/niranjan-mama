@@ -11,6 +11,9 @@ import {
   discoverMappingKeys,
   getMappingKeys,
   inspectDatasheetFile,
+  listTemplates,
+  planDatasheetTemplate,
+  type FormatPlan,
   suggestColumnMappings,
   listDatasheetTemplates,
   listDatasheets,
@@ -19,7 +22,12 @@ import {
   updateDatasheetTemplate,
   uploadDatasheet,
 } from "../api/endpoints";
-import type { Datasheet, DatasheetTemplate, MappingKeyCategories } from "../api/types";
+import type {
+  Datasheet,
+  DatasheetTemplate,
+  MappingKeyCategories,
+  Template,
+} from "../api/types";
 import {
   IconChevronDown,
   IconSearch,
@@ -1016,6 +1024,66 @@ function TemplatesTab({ availablePaths }: { availablePaths: string[] }) {
 
   const editingTemplate = templates.find((t) => t._id === editingId) ?? null;
 
+  // Build the whole format from a file and a script instead of typing three lists that
+  // are each written down somewhere already.
+  const planFileRef = useRef<HTMLInputElement>(null);
+  const [plan, setPlan] = useState<Awaited<ReturnType<typeof planDatasheetTemplate>> | null>(null);
+  const [planFor, setPlanFor] = useState<{ useCase: string; language: string }>({
+    useCase: "",
+    language: "",
+  });
+  const [planning, setPlanning] = useState(false);
+  const [planError, setPlanError] = useState<string | null>(null);
+
+  const { data: promptTemplates } = useQuery({ queryKey: ["templates"], queryFn: listTemplates });
+  const promptTemplate: Template | null = promptTemplates?.[0] ?? null;
+  const useCaseOptions = Object.entries(promptTemplate?.use_cases ?? {}).map(([key, cfg]) => ({
+    key,
+    label: (cfg as { label?: string })?.label || key,
+    languages: Object.keys((cfg as { languages?: Record<string, unknown> })?.languages ?? {}),
+  }));
+  const activeUseCase = useCaseOptions.find((u) => u.key === planFor.useCase) ?? useCaseOptions[0];
+
+  const buildPlan = async (file: File) => {
+    setPlanning(true);
+    setPlanError(null);
+    try {
+      setPlan(
+        await planDatasheetTemplate(file, {
+          use_case: activeUseCase?.key,
+          language: planFor.language || undefined,
+          template_id: promptTemplate?._id,
+        }),
+      );
+    } catch (err) {
+      setPlanError((err as Error).message);
+    } finally {
+      setPlanning(false);
+      if (planFileRef.current) planFileRef.current.value = "";
+    }
+  };
+
+  const createFromPlan = async () => {
+    if (!plan) return;
+    const name = (await dialog.prompt("Name this format", {
+      defaultValue: plan.filename.replace(/\.[^.]+$/, ""),
+    }))?.trim();
+    if (!name) return;
+    createMutation.mutate(
+      {
+        name,
+        required_columns: plan.required_columns,
+        update_columns_mapping: plan.update_columns_mapping,
+      },
+      {
+        onSuccess: (data) => {
+          setPlan(null);
+          setEditingId(data.datasheet_template_id);
+        },
+      },
+    );
+  };
+
   const handleCreate = async () => {
     const name = (await dialog.prompt("New template name", { placeholder: "bajaj pdm" }))?.trim();
     if (!name) return;
@@ -1076,13 +1144,61 @@ function TemplatesTab({ availablePaths }: { availablePaths: string[] }) {
                 <IconSearch size={14} />
               </span>
         </div>
+        <select
+          value={activeUseCase?.key ?? ""}
+          onChange={(e) => setPlanFor({ useCase: e.target.value, language: "" })}
+          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+        >
+          {useCaseOptions.map((u) => (
+            <option key={u.key} value={u.key}>
+              {u.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={planFor.language}
+          onChange={(e) => setPlanFor((p) => ({ ...p, language: e.target.value }))}
+          className="rounded-md border border-slate-300 px-2.5 py-1.5 text-sm"
+        >
+          <option value="">Default language</option>
+          {(activeUseCase?.languages ?? []).map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
+        <input
+          ref={planFileRef}
+          type="file"
+          accept=".csv,.xlsx,.xlsm"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) void buildPlan(f);
+          }}
+          className="hidden"
+        />
+        <button
+          onClick={() => planFileRef.current?.click()}
+          disabled={planning}
+          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+        >
+          {planning ? "Reading…" : "Build from a file"}
+        </button>
         <button
           onClick={handleCreate}
-          className="rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700"
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
         >
-          Create Template
+          Empty format
         </button>
       </div>
+
+      {planError && (
+        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {planError}
+        </p>
+      )}
+
+      {plan && <PlanPreview plan={plan} onCancel={() => setPlan(null)} onCreate={createFromPlan} />}
 
       {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
 
@@ -1490,5 +1606,138 @@ export function DatasheetTemplates() {
 
       {activeTab === "Result Fields" && <MappingKeysTab />}
     </div>
+  );
+}
+
+/**
+ * What the format would be, before it is saved.
+ *
+ * The missing placeholders are the point of showing this at all: one the file cannot fill
+ * is spoken to the customer as a gap in mid-sentence, and that is far better seen here
+ * than heard on the first call.
+ */
+function PlanPreview({
+  plan,
+  onCancel,
+  onCreate,
+}: {
+  plan: FormatPlan;
+  onCancel: () => void;
+  onCreate: () => void;
+}) {
+  const blocked = !plan.script_configured;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">
+            {plan.filename} · {plan.rows} row{plan.rows === 1 ? "" : "s"}
+          </h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            {plan.use_case} · {plan.language}
+            {plan.phone_column && ` · dialling from "${plan.phone_column}"`}
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button
+            onClick={onCancel}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onCreate}
+            disabled={blocked}
+            title={blocked ? "That language has no script configured" : undefined}
+            className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+          >
+            Create this format
+          </button>
+        </div>
+      </div>
+
+      {blocked && (
+        <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          This use case has no script for that language, so a call would have nothing to
+          say. Add one under Templates first.
+        </p>
+      )}
+
+      {plan.placeholders_missing.length > 0 && (
+        <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-xs font-medium text-amber-800">
+            {plan.placeholders_missing.length} placeholder
+            {plan.placeholders_missing.length === 1 ? "" : "s"} the file cannot fill — the
+            caller hears a gap where each one should be.
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {plan.placeholders_missing.map((m) => (
+              <span
+                key={m}
+                className="rounded bg-white px-1.5 py-0.5 font-mono text-[10px] text-amber-800"
+              >
+                {`{${m}}`}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <PlanColumn title={`Columns (${plan.required_columns.length})`}>
+          {plan.required_columns.map((c) => (
+            <Chip key={c} text={c} />
+          ))}
+        </PlanColumn>
+        <PlanColumn title={`Script fills (${plan.placeholders_matched.length})`}>
+          {plan.placeholders_matched.map((m) => (
+            <Chip key={m.placeholder} text={`{${m.placeholder}} ← ${m.column}`} tone="emerald" />
+          ))}
+          {plan.placeholders_matched.length === 0 && (
+            <span className="text-[11px] text-slate-400">Nothing matched.</span>
+          )}
+        </PlanColumn>
+        <PlanColumn
+          title={`Written back (${Object.keys(plan.update_columns_mapping).length})`}
+          hint={`from ${plan.sampled_calls} calls`}
+        >
+          {Object.keys(plan.update_columns_mapping).map((c) => (
+            <Chip key={c} text={c} />
+          ))}
+        </PlanColumn>
+      </div>
+    </div>
+  );
+}
+
+function PlanColumn({
+  title,
+  hint,
+  children,
+}: {
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <div className="text-[11px] font-medium text-slate-600">
+        {title}
+        {hint && <span className="ml-1 font-normal text-slate-400">{hint}</span>}
+      </div>
+      <div className="mt-1.5 flex max-h-36 flex-wrap gap-1 overflow-y-auto">{children}</div>
+    </div>
+  );
+}
+
+function Chip({ text, tone }: { text: string; tone?: "emerald" }) {
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${
+        tone === "emerald" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
+      }`}
+    >
+      {text}
+    </span>
   );
 }
