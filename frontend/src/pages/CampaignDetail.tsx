@@ -2,10 +2,14 @@ import { useMemo, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { IconPhone, IconPulse, IconCheck, IconClock, IconHourglass, IconX, IconMessage, IconChart } from "../components/Icons";
 import { DispositionCard } from "../components/Disposition";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   downloadCallsCsv,
   getCampaign,
+  launchCampaign,
+  pauseCampaign,
+  resumeCampaign,
+  stopCampaign,
   getDispositions,
   getSession,
   getSessionMessages,
@@ -16,6 +20,9 @@ import type { DatasheetRow } from "../api/types";
 const STATUS_DOT: Record<string, string> = {
   draft: "bg-slate-400",
   running: "bg-amber-500",
+  paused: "bg-blue-500",
+  stopping: "bg-orange-500",
+  stopped: "bg-slate-500",
   completed: "bg-emerald-500",
   failed: "bg-red-500",
 };
@@ -118,6 +125,27 @@ export function CampaignDetail() {
     enabled: !!selectedRow?.session_id,
   });
 
+  const queryClient = useQueryClient();
+  const [controlNote, setControlNote] = useState<string | null>(null);
+  const control = useMutation({
+    mutationFn: ({ action }: { action: "pause" | "resume" | "stop" | "rerun" }) => {
+      const fn = { pause: pauseCampaign, resume: resumeCampaign, stop: stopCampaign, rerun: launchCampaign }[action];
+      return fn(id!);
+    },
+    onSuccess: (_d, v) => {
+      setControlNote(
+        {
+          pause: "Paused. Calls already on the line will finish.",
+          resume: "Going again from where it stopped.",
+          stop: "Stopping. Rows not yet dialled stay queued for a re-run.",
+          rerun: "Started again — the rows that were left will be called.",
+        }[v.action],
+      );
+      queryClient.invalidateQueries({ queryKey: ["campaign", id] });
+    },
+    onError: (err: Error) => setControlNote(err.message),
+  });
+
   const [exporting, setExporting] = useState(false);
   const [exportNote, setExportNote] = useState<string | null>(null);
 
@@ -176,6 +204,46 @@ export function CampaignDetail() {
         </button>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-semibold text-slate-900">{campaign?.name}</h1>
+          {(() => {
+            const status = campaign?.status ?? "";
+            const busy = control.isPending;
+            const btn =
+              "rounded-lg px-3.5 py-1.5 text-xs font-medium transition disabled:opacity-40";
+            if (status === "running")
+              return (
+                <>
+                  <button onClick={() => control.mutate({ action: "pause" })} disabled={busy}
+                    className={`${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`}>
+                    Pause
+                  </button>
+                  <button onClick={() => control.mutate({ action: "stop" })} disabled={busy}
+                    className={`${btn} border border-rose-300 text-rose-700 hover:bg-rose-50`}>
+                    Stop
+                  </button>
+                </>
+              );
+            if (status === "paused")
+              return (
+                <>
+                  <button onClick={() => control.mutate({ action: "resume" })} disabled={busy}
+                    className={`${btn} bg-indigo-600 text-white hover:bg-indigo-700`}>
+                    Resume
+                  </button>
+                  <button onClick={() => control.mutate({ action: "stop" })} disabled={busy}
+                    className={`${btn} border border-rose-300 text-rose-700 hover:bg-rose-50`}>
+                    Stop
+                  </button>
+                </>
+              );
+            if (status === "stopping")
+              return <span className="text-xs text-slate-500">Stopping…</span>;
+            return (
+              <button onClick={() => control.mutate({ action: "rerun" })} disabled={busy}
+                className={`${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`}>
+                Run again
+              </button>
+            );
+          })()}
           <button
             onClick={exportReport}
             disabled={exporting}
@@ -185,7 +253,9 @@ export function CampaignDetail() {
             {exporting ? "Building…" : "Download report"}
           </button>
         </div>
-        {exportNote && <p className="mt-1 text-xs text-slate-500">{exportNote}</p>}
+        {(exportNote || controlNote) && (
+          <p className="mt-1 text-xs text-slate-500">{controlNote ?? exportNote}</p>
+        )}
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">

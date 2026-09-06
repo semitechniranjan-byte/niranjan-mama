@@ -25,6 +25,23 @@ logger = logging.getLogger(__name__)
 
 _running_campaigns: set[str] = set()
 
+# What a running campaign has been told to do. A row consults this after it has taken a
+# slot and before it dials, so pausing lets calls already in progress finish rather than
+# cutting anyone off mid-sentence, and stopping leaves the untouched rows queued for a
+# later run instead of marking them failed.
+RUNNING, PAUSED, STOPPED = "running", "paused", "stopped"
+_campaign_control: Dict[str, str] = {}
+# How often a paused row wakes to see whether it may go.
+PAUSE_POLL_SECONDS = 2.0
+
+
+def control_state(campaign_id: str) -> str:
+    return _campaign_control.get(campaign_id, RUNNING)
+
+
+def set_control_state(campaign_id: str, state: str) -> None:
+    _campaign_control[campaign_id] = state
+
 CALL_END_POLL_INTERVAL = 3
 CALL_END_TIMEOUT = 180
 
@@ -220,6 +237,15 @@ async def _run_one_row(
     # and degrade every one of them at the same time.
     async with call_registry.global_call_semaphore():
         async with semaphore:
+            # Hold here while the run is paused, and leave the row queued if it was stopped.
+            # Checking after the slot is taken rather than before means the decision is read
+            # as late as possible - a stop reaches rows that were still waiting their turn.
+            while control_state(campaign_id) == PAUSED:
+                await asyncio.sleep(PAUSE_POLL_SECONDS)
+            if control_state(campaign_id) == STOPPED:
+                logger.info("Campaign %s stopped; row %s left queued", campaign_id, row_index)
+                return
+
             # A fresh handler per call keeps session/audio state isolated; the Mongo client is
             # shared so concurrency does not multiply connections.
             handler = CallHandler(db=db)
@@ -322,6 +348,7 @@ async def _run_one_row(
 
 
 async def run_campaign(shared_handler, campaign_id: str) -> None:
+    set_control_state(campaign_id, RUNNING)
     if campaign_id in _running_campaigns:
         return
     _running_campaigns.add(campaign_id)
@@ -456,6 +483,8 @@ async def run_campaign(shared_handler, campaign_id: str) -> None:
                     "Campaign %s row %s raised", campaign_id, row.get("row_index"), exc_info=outcome
                 )
 
-        await db.update_campaign(campaign_id, status="completed")
+        stopped = control_state(campaign_id) == STOPPED
+        await db.update_campaign(campaign_id, status="stopped" if stopped else "completed")
     finally:
         _running_campaigns.discard(campaign_id)
+        _campaign_control.pop(campaign_id, None)

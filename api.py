@@ -24,6 +24,7 @@ try:
     from .config import settings
     from .datasheet_service import parse_datasheet_file, validate_columns
     from .campaign_service import run_campaign
+    from . import campaign_service
     from .template_service import SUPPORTED_LANGUAGES, resolve_template_config, apply_format_value_transforms
     from .providers import describe_providers
     from . import call_registry
@@ -33,6 +34,7 @@ except ImportError:  # pragma: no cover
     from config import settings
     from datasheet_service import parse_datasheet_file, validate_columns
     from campaign_service import run_campaign
+    import campaign_service
     from template_service import SUPPORTED_LANGUAGES, resolve_template_config, apply_format_value_transforms
     from providers import describe_providers
     import call_registry
@@ -1086,6 +1088,104 @@ async def delete_template(template_id: str) -> dict:
     return {"status": "deleted", "template_id": template_id}
 
 
+# Columns whose name does not spell out where the value lives. Everything else follows
+# the rule below - PTP_DATE is model_data.ptp_date - and needs no entry here.
+# Root-level fields worth writing back to a client's sheet. The rest of the document is
+# about running the call, not about its result.
+ROOT_MAPPABLE = {
+    "session_id", "call_uuid", "execution_id", "attempt_count", "phone_number",
+    "from_number", "direction", "language", "use_case", "disposition_code",
+    "hangup_source", "call_status", "created_at", "started_at", "ended_at",
+    "recording_url", "recording_id",
+}
+
+MAPPING_ALIASES: Dict[str, str] = {
+    "PHONE": "phone_number",
+    "MOBILE": "phone_number",
+    "MOBILE_NO": "phone_number",
+    "DIALED_DATETIME": "created_at|call_info.BillDuration",
+    "CUSTOMER_START_TIME": "call_info.AnswerTime|call_info.StartTime|call_info.CallStartTime",
+    "CUSTOMER_END_TIME": "call_info.EndTime|call_info.CallEndTime|call_info.EndTimeUtc",
+    "BOT/IVR_STATUS": "call_info.CallStatus|call_info.call_status|call_status",
+    "DISPOSITION": "model_data.disposition_code|call_info.Disposition|disposition_code",
+    "SUMMARY": "model_data.summary",
+    "CUSTOMER_SAID": "model_data.customer_said",
+}
+
+
+@app.get("/datasheet-templates/{datasheet_template_id}/suggest-mappings")
+async def suggest_column_mappings(
+    datasheet_template_id: str, sample: int = 200, min_coverage: int = 50,
+) -> dict:
+    """Mappings this template is missing, worked out from what calls actually produce.
+
+    Twenty-one of these were typed in by hand, and fifteen of them were the column name
+    lower-cased: PTP_DATE is model_data.ptp_date, PAID_FLAG is model_data.paid_flag. That
+    is a rule, not a decision. Applying it to the keys real calls carry writes them, and a
+    short alias table covers the few whose name says nothing about where the value lives.
+    """
+    template = await handler.db.get_datasheet_template(datasheet_template_id)
+    if not template:
+        raise HTTPException(status_code=404, detail="template not found")
+
+    existing = {k.upper(): v for k, v in (template.get("update_columns_mapping") or {}).items()}
+    discovered = await discover_mapping_keys(sample=sample)
+
+    suggestions: List[dict] = []
+    seen = set(existing)
+
+    for entry in discovered["categories"]:
+        category = entry["category"]
+        for key in entry["keys"]:
+            name = str(key["key"])
+            column = name.upper()
+            # Fields only a handful of calls carry belong to another use case's script,
+            # not to this template. The threshold keeps 82 suggestions down to the ones a
+            # call on this script actually produces.
+            if column in seen or key["coverage"] < min_coverage:
+                continue
+            # A session document holds plenty that belongs to running the call and nothing
+            # to a client's sheet - the script it used, when it last made a sound, whether
+            # its socket is open. Offering all of it turned 21 hand-written mappings into
+            # 96 suggestions, which is worse than typing them. What a desk writes back is
+            # what the analysis concluded, what the carrier reported, and a short list of
+            # facts about the call itself.
+            if category == "root" and name not in ROOT_MAPPABLE:
+                continue
+            seen.add(column)
+            path = name if category == "root" else f"{category}.{name}"
+            suggestions.append({
+                "column": column,
+                "path": path,
+                "coverage": key["coverage"],
+                "reason": "name matches the field",
+            })
+
+    # Then the ones whose name gives nothing away, offered only if the template asks for
+    # that column and has not mapped it.
+    required = {str(c).upper() for c in (template.get("required_columns") or [])}
+    for column, path in MAPPING_ALIASES.items():
+        if column in seen:
+            continue
+        if column not in required and column not in ("SUMMARY", "DISPOSITION"):
+            continue
+        seen.add(column)
+        suggestions.append({
+            "column": column,
+            "path": path,
+            "coverage": None,
+            "reason": "known column, different field name",
+        })
+
+    suggestions.sort(key=lambda s: (-(s["coverage"] or 0), s["column"]))
+    return {
+        "template": template.get("name"),
+        "already_mapped": len(existing),
+        "sampled": discovered["sampled"],
+        "suggestions": suggestions,
+    }
+
+
 @app.post("/datasheet-templates", dependencies=[Depends(require_admin)])
 async def create_datasheet_template(payload: DatasheetTemplateRequest) -> dict:
     datasheet_template_id = await handler.db.create_datasheet_template(payload.model_dump())
@@ -1758,10 +1858,50 @@ async def launch_campaign(campaign_id: str) -> dict:
     campaign = await handler.db.get_campaign(campaign_id)
     if not campaign:
         raise HTTPException(status_code=404, detail="campaign not found")
-    if campaign.get("status") == "running":
-        raise HTTPException(status_code=409, detail="campaign is already running")
+    if campaign_service.is_campaign_running(campaign_id):
+        raise HTTPException(status_code=409, detail="that run is already going")
     asyncio.create_task(run_campaign(handler, campaign_id))
     return {"status": "launching", "campaign_id": campaign_id}
+
+
+@app.post("/campaigns/{campaign_id}/pause", dependencies=[Depends(require_api_key)])
+async def pause_campaign(campaign_id: str) -> dict:
+    """Hold the queue. Calls already on the line finish; nothing new is dialled.
+
+    A client watching a run go out wants a brake, and there was none: once launched the
+    only way to stop was to let it finish or restart the service.
+    """
+    if not await handler.db.get_campaign(campaign_id):
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if not campaign_service.is_campaign_running(campaign_id):
+        raise HTTPException(status_code=409, detail="that run is not going")
+    campaign_service.set_control_state(campaign_id, campaign_service.PAUSED)
+    await handler.db.update_campaign(campaign_id, status="paused")
+    return {"status": "paused", "campaign_id": campaign_id}
+
+
+@app.post("/campaigns/{campaign_id}/resume", dependencies=[Depends(require_api_key)])
+async def resume_campaign(campaign_id: str) -> dict:
+    """Let the queue go again, from where it stopped."""
+    if not await handler.db.get_campaign(campaign_id):
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if not campaign_service.is_campaign_running(campaign_id):
+        raise HTTPException(status_code=409, detail="that run is no longer going")
+    campaign_service.set_control_state(campaign_id, campaign_service.RUNNING)
+    await handler.db.update_campaign(campaign_id, status="running")
+    return {"status": "running", "campaign_id": campaign_id}
+
+
+@app.post("/campaigns/{campaign_id}/stop", dependencies=[Depends(require_api_key)])
+async def stop_campaign(campaign_id: str) -> dict:
+    """Stop dialling. Calls in progress finish; untouched rows stay queued for a re-run."""
+    if not await handler.db.get_campaign(campaign_id):
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if not campaign_service.is_campaign_running(campaign_id):
+        raise HTTPException(status_code=409, detail="that run is not going")
+    campaign_service.set_control_state(campaign_id, campaign_service.STOPPED)
+    await handler.db.update_campaign(campaign_id, status="stopping")
+    return {"status": "stopping", "campaign_id": campaign_id}
 
 
 @app.get("/campaigns")

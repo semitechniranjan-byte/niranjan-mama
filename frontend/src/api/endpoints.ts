@@ -359,6 +359,15 @@ export const createCampaign = (payload: {
   agent_id?: string;
   agent_ids?: string[];
 }) => api.post<{ campaign_id: string }>("/campaigns", payload).then((r) => r.data);
+/** Hold the queue. Calls on the line finish; nothing new is dialled. */
+export const pauseCampaign = (id: string) =>
+  api.post<{ status: string }>(`/campaigns/${id}/pause`).then((r) => r.data);
+/** Let the queue go again from where it stopped. */
+export const resumeCampaign = (id: string) =>
+  api.post<{ status: string }>(`/campaigns/${id}/resume`).then((r) => r.data);
+/** Stop dialling. Untouched rows stay queued for a re-run. */
+export const stopCampaign = (id: string) =>
+  api.post<{ status: string }>(`/campaigns/${id}/stop`).then((r) => r.data);
 export const launchCampaign = (id: string) =>
   api.post(`/campaigns/${id}/launch`).then((r) => r.data);
 export const listCampaigns = () =>
