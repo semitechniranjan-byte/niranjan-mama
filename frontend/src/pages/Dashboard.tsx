@@ -1,11 +1,12 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { dispositionTone, maskPhone } from "../components/Disposition";
 import { OUTCOME_GROUPS, countsForGroups } from "../components/Outcomes";
 import {
   getHealth,
   getPromisesDue,
+  recallSession,
   listCampaigns,
   listQueueCalls,
   listSessions,
@@ -105,6 +106,25 @@ export function Dashboard() {
   const { data: sessions } = useQuery({ queryKey: ["sessions"], queryFn: listSessions });
   const { data: queue } = useQuery({ queryKey: ["queue"], queryFn: listQueueCalls });
   const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: listCampaigns });
+  const promiseClient = useQueryClient();
+  const [calling, setCalling] = useState<string | null>(null);
+  const [callNote, setCallNote] = useState<string | null>(null);
+  // Chasing a promise means ringing the person back, so the row that names them is where
+  // the call belongs - not a number to copy into the test-call form.
+  const callAgain = useMutation({
+    mutationFn: recallSession,
+    onSuccess: () => {
+      setCallNote("Calling now — it will show up in Conversations.");
+      promiseClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data
+        ?.detail;
+      setCallNote(detail || (err as Error).message);
+    },
+    onSettled: () => setCalling(null),
+  });
+
   const { data: promises } = useQuery({
     queryKey: ["promisesDue"],
     queryFn: getPromisesDue,
@@ -363,6 +383,8 @@ export function Dashboard() {
             ))}
           </div>
 
+          {callNote && <p className="mt-3 text-xs text-slate-500">{callNote}</p>}
+
           <div className="mt-4 divide-y divide-slate-100">
             {promises.due_soon.slice(0, 6).map((p) => (
               <div key={p.session_id} className="flex items-center gap-3 py-2.5">
@@ -378,6 +400,18 @@ export function Dashboard() {
                 <span className="min-w-0 flex-1 truncate text-xs text-slate-500" title={p.summary}>
                   {p.summary}
                 </span>
+                <button
+                  onClick={() => {
+                    setCallNote(null);
+                    setCalling(p.session_id);
+                    callAgain.mutate(p.session_id);
+                  }}
+                  disabled={calling === p.session_id}
+                  title="Ring this customer again"
+                  className="shrink-0 rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+                >
+                  {calling === p.session_id ? "Calling…" : "Call"}
+                </button>
                 <Link
                   to={`/sessions/${p.session_id}`}
                   className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50"

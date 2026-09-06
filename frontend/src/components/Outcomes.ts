@@ -30,7 +30,7 @@ export const OUTCOME_GROUPS: OutcomeGroup[] = [
   },
   {
     key: "refused",
-    label: "Refused",
+    label: "Refused to pay",
     codes: ["RTP", "NC"],
     hint: "No, or no commitment",
     tile: "border-rose-200 bg-rose-50 hover:border-rose-300",
@@ -54,7 +54,7 @@ export const OUTCOME_GROUPS: OutcomeGroup[] = [
   },
   {
     key: "unreached",
-    label: "Not reached",
+    label: "Not reachable",
     codes: ["NR", "ICR", "RNR", "LM"],
     hint: "Worth another try",
     tile: "border-slate-200 bg-slate-50 hover:border-slate-300",
