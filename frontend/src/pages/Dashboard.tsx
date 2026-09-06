@@ -269,9 +269,61 @@ export function Dashboard() {
         />
       </div>
 
+      {/* Call outcomes */}
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900">Call outcomes</h2>
+            <p className="text-xs text-slate-400">
+              {outcomes.analysed === 0
+                ? "Outcomes appear here once calls have been analysed"
+                : outcomes.otherCodes > 0
+                  ? `${outcomes.onTiles} of ${outcomes.analysed} analysed calls · ${outcomes.otherCodes} on other codes, in Bulk Calls`
+                  : `Across ${outcomes.analysed} analysed call${outcomes.analysed === 1 ? "" : "s"}`}
+            </p>
+          </div>
+          <Link
+            to="/sessions"
+            className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            All conversations
+          </Link>
+        </div>
+
+        {outcomes.analysed > 0 ? (
+          /* Six tiles, each a link into the calls behind it. A number nobody can act on
+             is just decoration; from the list a caller can be dialled again or read. */
+          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
+            {OUTCOME_GROUPS.map((g) => {
+              const n = outcomes.byGroupKey[g.key] ?? 0;
+              return (
+                <Link
+                  key={g.key}
+                  to={`/sessions?outcome=${g.key}`}
+                  className={`group rounded-xl border p-4 transition ${g.tile}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className={`text-2xl font-semibold ${g.value}`}>{n}</div>
+                    <span className="text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500">
+                      <IconArrowRight size={14} />
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs font-medium text-slate-700">{g.label}</div>
+                  <div className="text-[11px] text-slate-400">{g.hint}</div>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="mt-4 rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
+            No analysed calls yet. Make a test call and the outcome will show up here.
+          </p>
+        )}
+      </div>
+
       {/* Promises to chase. A promise is only worth something if somebody rings on the
-          day, and the date and amount were already sitting in every scored call with
-          nothing reading them back out. */}
+        day, and the date and amount were already sitting in every scored call with
+        nothing reading them back out. */}
       {promises && promises.counts.today + promises.counts.tomorrow + promises.counts.overdue > 0 && (
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -338,60 +390,8 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* Call outcomes */}
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-900">Call outcomes</h2>
-            <p className="text-xs text-slate-400">
-              {outcomes.analysed === 0
-                ? "Outcomes appear here once calls have been analysed"
-                : outcomes.otherCodes > 0
-                  ? `${outcomes.onTiles} of ${outcomes.analysed} analysed calls · ${outcomes.otherCodes} on other codes, in Bulk Calls`
-                  : `Across ${outcomes.analysed} analysed call${outcomes.analysed === 1 ? "" : "s"}`}
-            </p>
-          </div>
-          <Link
-            to="/sessions"
-            className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
-          >
-            All conversations
-          </Link>
-        </div>
-
-        {outcomes.analysed > 0 ? (
-          /* Six tiles, each a link into the calls behind it. A number nobody can act on
-             is just decoration; from the list a caller can be dialled again or read. */
-          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
-            {OUTCOME_GROUPS.map((g) => {
-              const n = outcomes.byGroupKey[g.key] ?? 0;
-              return (
-                <Link
-                  key={g.key}
-                  to={`/sessions?outcome=${g.key}`}
-                  className={`group rounded-xl border p-4 transition ${g.tile}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className={`text-2xl font-semibold ${g.value}`}>{n}</div>
-                    <span className="text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500">
-                      <IconArrowRight size={14} />
-                    </span>
-                  </div>
-                  <div className="mt-0.5 text-xs font-medium text-slate-700">{g.label}</div>
-                  <div className="text-[11px] text-slate-400">{g.hint}</div>
-                </Link>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="mt-4 rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
-            No analysed calls yet. Make a test call and the outcome will show up here.
-          </p>
-        )}
-      </div>
-
+      {/* System health */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {/* System health */}
         <div className="overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm lg:col-span-2">
           <div className="flex items-center justify-between">
             <div>

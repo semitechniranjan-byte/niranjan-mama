@@ -11,6 +11,7 @@ import {
   discoverMappingKeys,
   getMappingKeys,
   inspectDatasheetFile,
+  suggestColumnMappings,
   listDatasheetTemplates,
   listDatasheets,
   renameDatasheet,
@@ -429,6 +430,39 @@ function ColumnMappingsCard({
     null,
   );
 
+  const [suggestions, setSuggestions] = useState<Awaited<
+    ReturnType<typeof suggestColumnMappings>
+  > | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+
+  /**
+   * Work out the mappings this template is missing instead of typing them.
+   *
+   * Fifteen of the twenty-one already here are the column name lower-cased - PTP_DATE is
+   * model_data.ptp_date - which is a rule, not a decision, so it is applied to the keys
+   * calls actually produce.
+   */
+  const findSuggestions = async () => {
+    setSuggesting(true);
+    try {
+      const found = await suggestColumnMappings(template._id);
+      setSuggestions(found);
+      setPicked(new Set(found.suggestions.map((s) => s.column)));
+    } finally {
+      setSuggesting(false);
+    }
+  };
+
+  const addPicked = () => {
+    if (!suggestions) return;
+    const next = { ...template.update_columns_mapping };
+    for (const s of suggestions.suggestions) if (picked.has(s.column)) next[s.column] = s.path;
+    save({ update_columns_mapping: next });
+    setSuggestions(null);
+    setPicked(new Set());
+  };
+
   const saveMapping = (outputCol: string, path: string) => {
     save({ update_columns_mapping: { ...template.update_columns_mapping, [outputCol]: path } });
     setModalState(null);
@@ -449,14 +483,82 @@ function ColumnMappingsCard({
         accent="bg-slate-50 text-indigo-600"
         title="Column Mappings"
         action={
-          <button
-            onClick={() => setModalState({ mode: "add" })}
-            className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
-          >
-            Add Mapping
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={findSuggestions}
+              disabled={suggesting}
+              className="rounded-md border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+            >
+              {suggesting ? "Looking…" : "Suggest"}
+            </button>
+            <button
+              onClick={() => setModalState({ mode: "add" })}
+              className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+            >
+              Add Mapping
+            </button>
+          </div>
         }
       />
+
+      {suggestions && (
+        <div className="border-b border-slate-100 bg-slate-50/70 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-slate-600">
+              {suggestions.suggestions.length} not mapped yet, from {suggestions.sampled} calls
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setSuggestions(null)}
+                className="rounded-md border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-white"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={addPicked}
+                disabled={picked.size === 0}
+                className="rounded-md bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-indigo-700 disabled:opacity-40"
+              >
+                Add {picked.size} mapping{picked.size === 1 ? "" : "s"}
+              </button>
+            </div>
+          </div>
+          <div className="mt-2 max-h-60 space-y-1 overflow-y-auto">
+            {suggestions.suggestions.map((sg) => (
+              <label
+                key={sg.column}
+                className="flex cursor-pointer items-center gap-2 rounded-md bg-white px-2.5 py-1.5"
+              >
+                <input
+                  type="checkbox"
+                  checked={picked.has(sg.column)}
+                  onChange={(e) => {
+                    const next = new Set(picked);
+                    if (e.target.checked) next.add(sg.column);
+                    else next.delete(sg.column);
+                    setPicked(next);
+                  }}
+                />
+                <span className="w-52 shrink-0 truncate text-xs font-medium text-slate-800">
+                  {sg.column}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-slate-500">
+                  {sg.path}
+                </span>
+                {sg.coverage != null && (
+                  <span className="shrink-0 text-[10px] text-slate-400">{sg.coverage}%</span>
+                )}
+              </label>
+            ))}
+            {suggestions.suggestions.length === 0 && (
+              <p className="px-2.5 py-2 text-xs text-slate-400">
+                Nothing missing — every field these calls produce is already mapped.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="space-y-2 p-3">
         {Object.entries(template.update_columns_mapping).map(([outputCol, path]) => (
           <div

@@ -124,6 +124,26 @@ export type TemplatePayload = Omit<Template, "_id" | "created_at" | "updated_at"
 
 export const listTemplates = () =>
   api.get<{ templates: Template[] }>("/templates").then((r) => r.data.templates);
+export interface MappingSuggestion {
+  column: string;
+  path: string;
+  coverage: number | null;
+  reason: string;
+}
+
+/** Mappings a datasheet template is missing, worked out from what calls actually produce. */
+export const suggestColumnMappings = (templateId: string, minCoverage = 70) =>
+  api
+    .get<{
+      template: string;
+      already_mapped: number;
+      sampled: number;
+      suggestions: MappingSuggestion[];
+    }>(`/datasheet-templates/${templateId}/suggest-mappings`, {
+      params: { min_coverage: minCoverage },
+    })
+    .then((r) => r.data);
+
 export interface InspectedColumn {
   column: string;
   /** The column name in the shape a prompt would use it: "Customer Name" -> CUSTOMER_NAME. */
