@@ -24,7 +24,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
   {
     heading: "Operations",
     items: [
-      { to: "/campaigns", label: "Campaigns", Icon: IconCampaign },
+      { to: "/campaigns", label: "Bulk Calls", Icon: IconCampaign },
       { to: "/sessions", label: "Conversations", Icon: IconMessage },
       { to: "/calls", label: "Test Call", Icon: IconPhone },
       { to: "/agents", label: "Agents", Icon: IconUsers },

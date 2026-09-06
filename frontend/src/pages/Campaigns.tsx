@@ -215,12 +215,15 @@ export function Campaigns() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 shadow-sm"><h1 className="text-lg font-semibold tracking-tight text-slate-900">Campaigns</h1></div>
+        <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 shadow-sm"><h1 className="text-lg font-semibold tracking-tight text-slate-900">Bulk Calls</h1>
+          <p className="mt-0.5 text-sm text-slate-500">
+            Call a whole datasheet, several at a time.
+          </p></div>
         <button
           onClick={() => setIsModalOpen(true)}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
-          Create Campaign
+          New Bulk Call
         </button>
       </div>
 
@@ -235,7 +238,7 @@ export function Campaigns() {
             className="w-full max-w-lg space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-xl"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">Launch a new campaign</h2>
+              <h2 className="text-sm font-semibold text-slate-900">Start a new bulk call</h2>
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
@@ -246,7 +249,7 @@ export function Campaigns() {
             </div>
 
             <label className="block text-xs font-medium text-slate-600">
-              Campaign name
+              Name this run
               <input
                 value={name}
                 onChange={(e) => {
@@ -433,7 +436,7 @@ export function Campaigns() {
               }
               className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              {createAndLaunchMutation.isPending ? "Launching..." : "Launch Campaign"}
+              {createAndLaunchMutation.isPending ? "Starting…" : "Start calling"}
             </button>
           </form>
         </div>

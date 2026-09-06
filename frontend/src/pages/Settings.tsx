@@ -281,7 +281,7 @@ function DispositionsEditor() {
       Icon={IconPlug}
       accent="bg-purple-50 text-purple-600"
       title="Disposition codes"
-      subtitle="Call outcomes returned by the analysis step; also colour the campaign badges."
+      subtitle="Call outcomes returned by the analysis step; also colour the badges on a bulk call."
       action={
         <button
           onClick={addRow}
@@ -429,7 +429,7 @@ export function Settings() {
             Icon={IconPhone}
             accent="bg-teal-50 text-teal-600"
             title="Outbound calling"
-            subtitle="Applies to every campaign."
+            subtitle="Applies to every bulk call."
           >
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field
@@ -489,7 +489,7 @@ export function Settings() {
             Icon={IconTag}
             accent="bg-blue-50 text-blue-600"
             title="Language fallback"
-            subtitle="Used when a campaign runs on Auto and a row has no language of its own."
+            subtitle="Used when a bulk call runs on Auto and a row has no language of its own."
           >
             <div className="grid grid-cols-1 sm:grid-cols-2">
               <Field
@@ -532,7 +532,7 @@ export function Settings() {
             subtitle="Capabilities powering every call."
           >
             <div className="space-y-2">
-              <StatusRow label="Data store" description="Sessions, campaigns and transcripts" ok={health?.mongo_ready} />
+              <StatusRow label="Data store" description="Sessions, bulk calls and transcripts" ok={health?.mongo_ready} />
               <StatusRow label="Speech recognition" description="Transcribes the caller" ok={health?.stt_ready} />
               <StatusRow label="Conversation engine" description="Decides the agent's replies" ok={health?.llm_ready} />
               <StatusRow label="Voice synthesis" description="Speaks replies to the caller" ok={health?.tts_ready} />

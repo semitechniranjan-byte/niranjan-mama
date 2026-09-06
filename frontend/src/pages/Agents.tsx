@@ -352,7 +352,7 @@ export function Agents() {
 
       {agents.length === 0 && !isLoading && (
         <p className="text-xs text-slate-400">
-          Campaigns fall back to 100 simultaneous calls until you create an agent.
+          A bulk call falls back to 100 simultaneous calls until you create an agent.
         </p>
       )}
 

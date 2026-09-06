@@ -165,7 +165,7 @@ export function Dashboard() {
       key: "db",
       Icon: IconDatabase,
       label: "Data store",
-      description: "Sessions, campaigns and transcripts",
+      description: "Sessions, bulk calls and transcripts",
       ready: health?.mongo_ready,
     },
     {
@@ -201,7 +201,7 @@ export function Dashboard() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">Dashboard</h1>
             <p className="mt-0.5 text-sm text-slate-500">
-              Live overview of your voice agent — calls, campaigns and system health.
+              Live overview of your voice agent — calls, bulk calls and system health.
             </p>
           </div>
           <span
@@ -229,7 +229,7 @@ export function Dashboard() {
           to="/sessions"
         />
         <StatCard
-          label="Campaigns"
+          label="Bulk Calls"
           value={campaignStats.total}
           sub={campaignStats.running > 0 ? `${campaignStats.running} running now` : "None running"}
           Icon={IconCampaign}
@@ -328,7 +328,7 @@ export function Dashboard() {
           <p className="text-xs text-slate-400">Jump straight into the common tasks</p>
           <div className="mt-3 space-y-2">
             {[
-              { to: "/campaigns", Icon: IconCampaign, label: "Launch a campaign", hint: "Pick a datasheet and language" },
+              { to: "/campaigns", Icon: IconCampaign, label: "Start a bulk call", hint: "Pick a datasheet and language" },
               { to: "/templates", Icon: IconTemplate, label: "Edit prompts", hint: "Use cases and languages" },
               { to: "/datasheets", Icon: IconTable, label: "Upload a datasheet", hint: "Add contacts to call" },
               { to: "/sessions", Icon: IconMessage, label: "Review transcripts", hint: "Listen back to calls" },

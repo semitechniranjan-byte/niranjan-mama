@@ -133,7 +133,7 @@ export function CampaignDetail() {
   const exportReport = async () => {
     const execution = campaign?.execution_id;
     if (!execution) {
-      setExportNote("This campaign has no calls recorded against it yet.");
+      setExportNote("This run has no calls recorded against it yet.");
       return;
     }
     setExporting(true);
@@ -210,7 +210,7 @@ export function CampaignDetail() {
             <div className="space-y-4">
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div>
-                  <div className="text-xs text-slate-400">Campaign Status</div>
+                  <div className="text-xs text-slate-400">Status</div>
                   <div className="mt-1 flex items-center gap-1.5 text-sm font-semibold text-slate-900">
                     <span className={`h-2 w-2 rounded-full ${STATUS_DOT[campaign?.status ?? ""] ?? "bg-slate-400"}`} />
                     {(campaign?.status ?? "").toUpperCase()}

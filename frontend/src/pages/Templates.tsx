@@ -332,9 +332,9 @@ function LanguageRoutingCard({
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-sm font-semibold text-slate-900">Automatic language routing</h3>
       <p className="mt-1 text-xs text-slate-400">
-        Used only when a campaign is launched with language = <strong>Auto</strong>. Each row's
-        language is read from this datasheet column. When you launch with a specific language
-        instead, this is ignored and the whole campaign runs in that one language.
+        Used only when a bulk call runs with language = <strong>Auto</strong>. Each row's
+        language is read from this datasheet column. When you start it in a specific language
+        instead, this is ignored and the whole run uses that one language.
       </p>
 
       <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -526,7 +526,7 @@ export function Templates() {
         <h1 className="text-xl font-semibold text-slate-900">Templates</h1>
         <p className="mt-1 text-sm text-slate-500">
           Each <strong>use case</strong> holds one prompt/greeting/analysis set per{" "}
-          <strong>language</strong>. Launch a campaign in a single language, or set it to Auto to
+          <strong>language</strong>. Run a bulk call in a single language, or set it to Auto to
           pick each row's language from the datasheet.
         </p>
       </div>
