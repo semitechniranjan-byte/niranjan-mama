@@ -233,6 +233,9 @@ export interface Campaign {
   stats: CampaignStats;
   created_at?: string;
   updated_at?: string;
+  /** Why rows never dialled, when a run finished without placing calls. */
+  last_error?: string | null;
+  failed_rows?: number;
 }
 
 /** A named worker pool: how many calls it runs at once and how long each may last. */

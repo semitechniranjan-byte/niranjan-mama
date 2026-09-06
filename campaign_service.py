@@ -243,17 +243,24 @@ async def _run_one_row(
             while control_state(campaign_id) == PAUSED:
                 await asyncio.sleep(PAUSE_POLL_SECONDS)
             if control_state(campaign_id) == STOPPED:
-                logger.info("Campaign %s stopped; row %s left queued", campaign_id, row_index)
+                logger.warning(
+                    "Campaign %s stopped; row %s left queued", campaign_id, row_index
+                )
                 return
 
-            # A fresh handler per call keeps session/audio state isolated; the Mongo client is
-            # shared so concurrency does not multiply connections.
-            handler = CallHandler(db=db)
-            handler.llm.set_provider(llm_provider)
-            handler.llm.set_model(llm_model)
-            handler.analysis_prompt = analysis_prompt
+            # Building the handler used to sit outside the try below. Anything it raised
+            # escaped to the gather that started this row, which logs and moves on, so the
+            # counters stayed on "queued" and the run reported completed having dialled
+            # nobody - with nothing on the record to say why.
             session_id = None
             try:
+                # A fresh handler per call keeps session/audio state isolated; the Mongo
+                # client is shared so concurrency does not multiply connections.
+                handler = CallHandler(db=db)
+                handler.llm.set_provider(llm_provider)
+                handler.llm.set_model(llm_model)
+                handler.analysis_prompt = analysis_prompt
+
                 await db.update_datasheet_row(datasheet_id, row_index, status="calling")
                 await db.shift_campaign_stat(campaign_id, "queued", "calling")
 
@@ -477,14 +484,27 @@ async def run_campaign(shared_handler, campaign_id: str) -> None:
             )
         # return_exceptions keeps one bad row from cancelling the rest of the campaign.
         results = await asyncio.gather(*tasks, return_exceptions=True)
+        failures: list[str] = []
         for row, outcome in zip(rows[:limit], results):
             if isinstance(outcome, Exception):
                 logger.exception(
                     "Campaign %s row %s raised", campaign_id, row.get("row_index"), exc_info=outcome
                 )
+                failures.append(f"row {row.get('row_index')}: {type(outcome).__name__}: {outcome}")
 
         stopped = control_state(campaign_id) == STOPPED
-        await db.update_campaign(campaign_id, status="stopped" if stopped else "completed")
+        # A run that dialled nobody used to finish saying "completed" with no hint that
+        # anything had gone wrong - the reason existed only in a log nobody reads. Put the
+        # first failures on the record so the run itself can say what happened.
+        update: Dict[str, Any] = {"status": "stopped" if stopped else "completed"}
+        update["last_error"] = "; ".join(failures[:3]) if failures else None
+        update["failed_rows"] = len(failures)
+        await db.update_campaign(campaign_id, **update)
+        if failures:
+            logger.warning(
+                "Campaign %s finished with %s row(s) that never dialled: %s",
+                campaign_id, len(failures), failures[0],
+            )
     finally:
         _running_campaigns.discard(campaign_id)
         _campaign_control.pop(campaign_id, None)

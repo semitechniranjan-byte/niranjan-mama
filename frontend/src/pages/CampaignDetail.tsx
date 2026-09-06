@@ -265,6 +265,17 @@ export function CampaignDetail() {
         {(exportNote || controlNote) && (
           <p className="mt-1 text-xs text-slate-500">{controlNote ?? exportNote}</p>
         )}
+        {/* A run that finished without dialling anyone used to look identical to one that
+            worked. If rows failed before they reached the phone, say so here. */}
+        {campaign?.last_error && (
+          <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <span className="font-medium">
+              {campaign.failed_rows ?? 0} row{campaign.failed_rows === 1 ? "" : "s"} never
+              reached the phone.
+            </span>{" "}
+            <span className="font-mono text-[11px]">{campaign.last_error}</span>
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
