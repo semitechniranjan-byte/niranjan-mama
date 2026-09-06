@@ -151,8 +151,6 @@ export function Dashboard() {
     const rows = [...counts.entries()]
       .map(([code, count]) => ({ code, count, group: dispositionTone(code).group }))
       .sort((a, b) => b.count - a.count);
-    const byGroup = (g: string) =>
-      rows.filter((r) => r.group === g).reduce((n, r) => n + r.count, 0);
     // Answer rate used to come off the campaign counters, which only know about calls a
     // campaign placed - 32 mostly-empty test campaigns reported 15% while the calls
     // themselves connected 73% of the time. Count the calls.
@@ -163,17 +161,20 @@ export function Dashboard() {
     const reached = analysed - notReached;
     const counts_by_code: Record<string, number> = {};
     for (const [code, n] of counts.entries()) counts_by_code[code] = n;
+    const grouped = countsForGroups(counts_by_code);
+    // Codes outside the six tiles - ones belonging to other use cases, or any new one the
+    // analysis starts returning - are deliberately left off this page. Saying how many
+    // there are keeps the tiles from looking like they should add up to the total.
+    const onTiles = Object.values(grouped).reduce((n, v) => n + v, 0);
     return {
       rows,
       analysed,
       reached,
       notReached,
+      onTiles,
+      otherCodes: analysed - onTiles,
       answerRate: analysed > 0 ? Math.round((reached / analysed) * 100) : null,
-      byGroupKey: countsForGroups(counts_by_code),
-      won: byGroup("won"),
-      pending: byGroup("pending"),
-      lost: byGroup("lost"),
-      unreached: byGroup("unreached"),
+      byGroupKey: grouped,
     };
   }, [sessions]);
 
@@ -343,9 +344,11 @@ export function Dashboard() {
           <div>
             <h2 className="text-sm font-semibold text-slate-900">Call outcomes</h2>
             <p className="text-xs text-slate-400">
-              {outcomes.analysed > 0
-                ? `Across ${outcomes.analysed} analysed call${outcomes.analysed === 1 ? "" : "s"}`
-                : "Dispositions appear here once calls have been analysed"}
+              {outcomes.analysed === 0
+                ? "Outcomes appear here once calls have been analysed"
+                : outcomes.otherCodes > 0
+                  ? `${outcomes.onTiles} of ${outcomes.analysed} analysed calls · ${outcomes.otherCodes} on other codes, in Bulk Calls`
+                  : `Across ${outcomes.analysed} analysed call${outcomes.analysed === 1 ? "" : "s"}`}
             </p>
           </div>
           <Link
