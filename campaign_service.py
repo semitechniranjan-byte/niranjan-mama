@@ -259,7 +259,6 @@ async def _run_one_row(
                 handler = CallHandler(db=db)
                 handler.llm.set_provider(llm_provider)
                 handler.llm.set_model(llm_model)
-                handler.analysis_prompt = analysis_prompt
 
                 await db.update_datasheet_row(datasheet_id, row_index, status="calling")
                 await db.shift_campaign_stat(campaign_id, "queued", "calling")
@@ -267,6 +266,11 @@ async def _run_one_row(
                 cfg = resolve_template_config(
                     template, row_data, language=campaign_language, use_case=campaign_use_case
                 )
+                # The scoring prompt belongs to the variant this row resolved to, which is
+                # only known once the config is resolved. It used to be assigned above from
+                # a name that did not exist in this scope, so every row raised NameError
+                # before it dialled and the run finished having called nobody.
+                handler.analysis_prompt = cfg["analysis_prompt"]
                 transformed_data = apply_format_value_transforms(template, row_data)
                 handler.tts.set_voice(cfg["tts_voice_id"], cfg["tts_model_id"], cfg["tts_language"])
                 handler.stt.set_language(cfg["stt_language"])
