@@ -498,6 +498,19 @@ async def create_outbound_call(payload: OutboundCallRequest) -> dict:
     Given a use case + language, the prompt/greeting/voice are resolved from the template
     the same way a campaign row is, so a test call is a faithful rehearsal of production.
     """
+    # One check covers every way a call is placed by hand - the test form, Call again on a
+    # conversation, and the promise rows on the dashboard all arrive here.
+    blocked = await handler.db.is_suppressed(payload.to_number)
+    if blocked:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{payload.to_number} is on the do-not-call list"
+                + (f" ({blocked.get('reason')})" if blocked.get("reason") else "")
+                + ". Remove it in Settings to call this number again."
+            ),
+        )
+
     app_settings = await handler.db.get_app_settings()
     provider = app_settings.get("telephony_provider") or "twilio"
     from_number = payload.from_number or app_settings.get("from_number") or None
@@ -1442,6 +1455,67 @@ def _codes_in_prompt(prompt: str) -> Dict[str, str]:
         if cleaned and not set(cleaned) <= set("-=_ ") and code not in found:
             found[code] = cleaned
     return found
+
+
+class SuppressionRequest(BaseModel):
+    phone_number: str
+    reason: Optional[str] = ""
+
+
+@app.get("/suppressions")
+async def list_suppressions(limit: int = 200, skip: int = 0) -> dict:
+    """The do-not-call list, newest first."""
+    items, total = await handler.db.list_suppressions(limit=max(1, min(limit, 1000)), skip=skip)
+    return {"suppressions": items, "total": total}
+
+
+@app.post("/suppressions", dependencies=[Depends(require_admin)])
+async def add_suppression(payload: SuppressionRequest) -> dict:
+    ok = await handler.db.suppress_number(
+        payload.phone_number, reason=payload.reason or "", source="manual"
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail="that does not look like a number")
+    return {"phone_number": payload.phone_number, "suppressed": True}
+
+
+@app.delete("/suppressions/{phone_number}", dependencies=[Depends(require_admin)])
+async def remove_suppression(phone_number: str) -> dict:
+    removed = await handler.db.unsuppress_number(phone_number)
+    return {"phone_number": phone_number, "removed": removed}
+
+
+@app.post("/suppressions/import", dependencies=[Depends(require_admin)])
+async def import_suppressions(file: UploadFile = File(...)) -> dict:
+    """Load a do-not-call list from a file.
+
+    A client's DNC register arrives as a spreadsheet, and typing a few thousand numbers in
+    one at a time is not a plan. Every column is scanned for something number-shaped, so
+    the file does not have to be laid out any particular way.
+    """
+    content = await file.read()
+    try:
+        columns, rows = parse_datasheet_file(file.filename or "", content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    added, skipped = 0, 0
+    for row in rows:
+        number = ""
+        for column in columns:
+            candidate = handler.db.normalise_number(row.get(column, ""))
+            if len(candidate) == 10:
+                number = candidate
+                break
+        if not number:
+            skipped += 1
+            continue
+        if await handler.db.suppress_number(
+            number, reason=f"Imported from {file.filename}", source="import"
+        ):
+            added += 1
+    _, total = await handler.db.list_suppressions(limit=1)
+    return {"read": len(rows), "added": added, "no_number_found": skipped, "total": total}
 
 
 @app.get("/dispositions/from-scripts")

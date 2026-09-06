@@ -1,3 +1,4 @@
+import re
 import logging
 from datetime import datetime
 from typing import Optional
@@ -29,6 +30,9 @@ class DatabaseService:
         self.campaigns = self.db["campaigns"]
         self.datasheet_templates = self.db["datasheet_templates"]
         self.dispositions = self.db["dispositions"]
+        # Numbers that must not be dialled again: wrong numbers, bereavements, legal
+        # threats, and anyone who asked to be left alone.
+        self.suppressions = self.db["suppressions"]
         self.mapping_keys = self.db["mapping_keys"]
         self.app_settings = self.db["app_settings"]
         self.ready = False
@@ -47,6 +51,8 @@ class DatabaseService:
             await self.runqueuecalls.create_index("status")
             await self.templates.create_index("name")
             await self.agent_rooms.create_index("room_name")
+            # Every dial checks this list, so the lookup has to be an index hit.
+            await self.suppressions.create_index("phone_number", unique=True)
             await self.agents.create_index([("name", 1), ("room_name", 1)])
             await self.datasheets.create_index("created_at")
             await self.campaigns.create_index("created_at")
@@ -296,6 +302,70 @@ class DatabaseService:
         except Exception:
             return False
         return result.deleted_count > 0
+
+    @staticmethod
+    def normalise_number(phone: str) -> str:
+        """Compare numbers by their digits.
+
+        The same person arrives as +916299515059, 916299515059 and 6299515059 depending on
+        which sheet they came from, and a suppression that only matches one spelling is no
+        suppression at all. The last ten digits are what identify an Indian mobile.
+        """
+        digits = re.sub(r"[^0-9]", "", str(phone or ""))
+        return digits[-10:] if len(digits) >= 10 else digits
+
+    async def is_suppressed(self, phone: str) -> Optional[dict]:
+        """The suppression entry for a number, if it is on the list."""
+        if not self.ready:
+            return None
+        key = self.normalise_number(phone)
+        if not key:
+            return None
+        return await self.suppressions.find_one({"phone_number": key})
+
+    async def suppress_number(
+        self, phone: str, reason: str = "", source: str = "manual",
+        session_id: Optional[str] = None,
+    ) -> bool:
+        """Add a number to the do-not-call list, keeping the first reason recorded."""
+        if not self.ready:
+            return False
+        key = self.normalise_number(phone)
+        if not key:
+            return False
+        await self.suppressions.update_one(
+            {"phone_number": key},
+            {
+                "$setOnInsert": {
+                    "phone_number": key,
+                    "reason": reason,
+                    "source": source,
+                    "session_id": session_id,
+                    "added_at": datetime.utcnow(),
+                }
+            },
+            upsert=True,
+        )
+        return True
+
+    async def unsuppress_number(self, phone: str) -> bool:
+        if not self.ready:
+            return False
+        result = await self.suppressions.delete_one(
+            {"phone_number": self.normalise_number(phone)}
+        )
+        return result.deleted_count > 0
+
+    async def list_suppressions(self, limit: int = 500, skip: int = 0) -> tuple[list[dict], int]:
+        if not self.ready:
+            return [], 0
+        total = await self.suppressions.count_documents({})
+        cursor = self.suppressions.find({}).sort("added_at", -1).skip(max(0, skip)).limit(limit)
+        items = []
+        async for doc in cursor:
+            doc["_id"] = str(doc.get("_id"))
+            items.append(doc)
+        return items, total
 
     async def get_dispositions(self) -> list[dict]:
         if not self.ready:

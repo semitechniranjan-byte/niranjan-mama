@@ -96,6 +96,12 @@ NOISE_TRANSCRIPTS = {
 # Network announcements the carrier plays into the call. They transcribe cleanly and at
 # high confidence, so nothing else catches them, and the agent then answers the operator
 # instead of the customer. Matched as substrings because the wording varies by circle.
+# Outcomes that end the relationship rather than pausing it. A refusal to pay is not
+# here: in collections that is a call to make again next week. These are the ones where
+# dialling again is wrong - the number is not theirs, they have died, they have threatened
+# legal action, or they need a person rather than an agent.
+SUPPRESS_ON_CODES = {"WN", "DEATH", "LGT", "LEGAL", "SUC_THREAT", "FRAUD"}
+
 CARRIER_ANNOUNCEMENTS = (
     "hold पर रखा", "line पर बने", "कृपया line",
     "call को hold", "व्यक्ति से बात कर रहे हैं",
@@ -1370,6 +1376,29 @@ class CallHandler:
                 return candidate
         return None
 
+    async def _suppress_if_final(self, session_id: str, code: Optional[str]) -> None:
+        """Put a number beyond calling when the outcome says the relationship is over.
+
+        Ringing back somebody who has threatened legal action, or a household that has just
+        reported a death, is the kind of mistake a client hears about from their customer
+        rather than from us.
+        """
+        if not code or code not in SUPPRESS_ON_CODES:
+            return
+        try:
+            session = await self.db.get_session(session_id) or {}
+            number = session.get("phone_number")
+            if not number or number == "unknown":
+                return
+            await self.db.suppress_number(
+                number, reason=f"Outcome {code}", source="automatic", session_id=session_id
+            )
+            logger.warning(
+                "SUPPRESSED [%s] %s will not be called again (%s)", session_id, number, code
+            )
+        except Exception as exc:
+            logger.warning("Could not suppress after %s: %s", session_id, exc)
+
     async def _summarise_call(self, history: List[Dict[str, str]], code: Optional[str]) -> str:
         """One plain sentence about how the call went, written once and stored.
 
@@ -1460,6 +1489,7 @@ class CallHandler:
                 return
 
             code = str(result.get("disposition_code") or "").upper() or None
+            await self._suppress_if_final(session_id, code)
             if not str(result.get("summary") or "").strip():
                 result["summary"] = await self._summarise_call(history, code)
             await self.db.update_model_data(session_id, result)

@@ -337,6 +337,21 @@ async def _run_one_row(
         await db.shift_campaign_stat(campaign_id, "queued", "failed")
         return
 
+    # Checked before the slot is taken, not after: a suppressed number should not occupy
+    # capacity another row could use.
+    blocked = await db.is_suppressed(phone)
+    if blocked:
+        logger.warning(
+            "Campaign %s: %s is on the do-not-call list (%s); row %s skipped",
+            campaign_id, phone, blocked.get("reason") or blocked.get("source"), row_index,
+        )
+        await db.update_datasheet_row(
+            datasheet_id, row_index, status="skipped", disposition_code="DNC",
+            next_attempt_at=None,
+        )
+        await db.shift_campaign_stat(campaign_id, "queued", "failed")
+        return
+
     # Two limits, deliberately separate: the agent semaphore is the business rule for
     # this pool; the global one is what the host and the LLM tier can actually survive.
     # A campaign configured for 500 concurrent calls would otherwise dial 500 at once

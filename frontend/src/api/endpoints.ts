@@ -256,6 +256,36 @@ export const adoptMappingKeys = (sample = 200) =>
     )
     .then((r) => r.data);
 
+export interface Suppression {
+  _id?: string;
+  phone_number: string;
+  reason?: string;
+  source?: string;
+  added_at?: string;
+}
+
+/** The do-not-call list. */
+export const listSuppressions = (limit = 200) =>
+  api
+    .get<{ suppressions: Suppression[]; total: number }>("/suppressions", { params: { limit } })
+    .then((r) => r.data);
+export const addSuppression = (phone_number: string, reason: string) =>
+  api.post("/suppressions", { phone_number, reason }).then((r) => r.data);
+export const removeSuppression = (phone_number: string) =>
+  api.delete(`/suppressions/${encodeURIComponent(phone_number)}`).then((r) => r.data);
+
+/** Load a client's DNC register from a spreadsheet. */
+export const importSuppressions = (file: File) => {
+  const form = new FormData();
+  form.append("file", file);
+  return api
+    .post<{ read: number; added: number; no_number_found: number; total: number }>(
+      "/suppressions/import",
+      form,
+    )
+    .then((r) => r.data);
+};
+
 /** The outcomes each script defines, against the list that is configured. */
 export const dispositionsFromScripts = () =>
   api

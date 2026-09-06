@@ -27,6 +27,7 @@ import {
 } from "../api/endpoints";
 import { useAuth } from "../context/AuthContext";
 import type { AppSettings, Disposition, ProviderCapability } from "../api/types";
+import { DoNotCall } from "../components/DoNotCall";
 
 const COLOR_OPTIONS = [
   "bg-green-500",
@@ -538,6 +539,8 @@ export function Settings() {
               />
             </div>
           </Card>
+
+          <DoNotCall />
 
           <Card
             Icon={IconClock}
