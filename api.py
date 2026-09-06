@@ -8,6 +8,7 @@ import csv
 import io as _io
 import re
 from datetime import date, datetime, timedelta
+from bson import ObjectId
 import secrets
 import traceback
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, File, Form
@@ -1379,8 +1380,31 @@ async def delete_datasheet_template(datasheet_template_id: str) -> dict:
 
 
 @app.get("/dispositions")
-async def get_dispositions() -> dict:
-    return {"dispositions": await handler.db.get_dispositions()}
+async def get_dispositions(check_unknown: bool = False) -> dict:
+    """The configured outcome codes, and optionally the ones calls returned anyway.
+
+    The list is one vertical's vocabulary - twenty-six codes, all about collecting a
+    payment - while the same deployment also runs real-estate, delivery and salon
+    scripts. Those return SV, BK and DC, which nothing recognises: they show as an
+    unlabelled grey badge, group as "unreached" on the dashboard, and land in a client's
+    report as a bare code. Nobody was told, so the drift only showed up by reading the
+    data. Asking for it says so.
+    """
+    configured = await handler.db.get_dispositions()
+    payload: dict = {"dispositions": configured}
+    if check_unknown:
+        known = {str(d.get("value") or "").upper() for d in configured}
+        rows = await handler.db.sessions.aggregate([
+            {"$match": {"disposition_code": {"$nin": [None, ""]}}},
+            {"$group": {"_id": "$disposition_code", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]).to_list(100)
+        payload["unknown"] = [
+            {"code": r["_id"], "count": r["count"]}
+            for r in rows
+            if str(r["_id"]).upper() not in known
+        ]
+    return payload
 
 
 @app.put("/dispositions", dependencies=[Depends(require_admin)])
@@ -1685,6 +1709,37 @@ async def template_placeholders(
 # Where a mapping key can live inside a session document. "root" is the document itself;
 # the others are the nested objects the analysis and the carrier write into.
 MAPPING_SOURCES = ("model_data", "call_info")
+
+
+@app.get("/datasheets/{datasheet_id}/preview")
+async def preview_datasheet(datasheet_id: str, limit: int = 10) -> dict:
+    """The first few rows of an uploaded list.
+
+    A list was a name and a row count; whether the right file went up, and whether the
+    numbers in it look like numbers, could only be checked by calling it. The whole sheet
+    is deliberately not sent - a hundred thousand rows is not a preview - so this asks the
+    database for the first few and leaves the rest where they are.
+    """
+    take = max(1, min(limit, 50))
+    doc = await handler.db.datasheets.find_one(
+        {"_id": ObjectId(datasheet_id)}, {"rows": {"$slice": take}, "name": 1, "columns": 1}
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="list not found")
+    total = await handler.db.datasheets.aggregate([
+        {"$match": {"_id": ObjectId(datasheet_id)}},
+        {"$project": {"n": {"$size": {"$ifNull": ["$rows", []]}}}},
+    ]).to_list(1)
+    return {
+        "name": doc.get("name"),
+        "columns": doc.get("columns") or [],
+        "total_rows": (total[0]["n"] if total else 0),
+        "rows": [
+            {"row_index": r.get("row_index"), "status": r.get("status"),
+             "disposition_code": r.get("disposition_code"), "data": r.get("data") or {}}
+            for r in (doc.get("rows") or [])
+        ],
+    }
 
 
 @app.post("/datasheets/inspect")

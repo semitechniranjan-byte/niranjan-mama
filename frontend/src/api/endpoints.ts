@@ -129,6 +129,24 @@ export type TemplatePayload = Omit<Template, "_id" | "created_at" | "updated_at"
 
 export const listTemplates = () =>
   api.get<{ templates: Template[] }>("/templates").then((r) => r.data.templates);
+export interface DatasheetPreview {
+  name: string;
+  columns: string[];
+  total_rows: number;
+  rows: {
+    row_index: number;
+    status?: string;
+    disposition_code?: string;
+    data: Record<string, unknown>;
+  }[];
+}
+
+/** The first few rows of an uploaded list, without pulling the whole sheet. */
+export const previewDatasheet = (id: string, limit = 10) =>
+  api
+    .get<DatasheetPreview>(`/datasheets/${id}/preview`, { params: { limit } })
+    .then((r) => r.data);
+
 export interface FormatPlan {
   filename: string;
   rows: number;

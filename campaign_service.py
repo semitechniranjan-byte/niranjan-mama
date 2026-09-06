@@ -92,18 +92,39 @@ async def _run_post_call_analysis(
             content = content.strip("`")
             if content.lower().startswith("json"):
                 content = content[4:]
-        return _enforce_disposition_rules(json.loads(content), session_id)
+        windows = _day_windows(await handler.db.get_app_settings())
+        return _enforce_disposition_rules(json.loads(content), session_id, windows)
     except Exception as exc:
         logger.warning("Post-call analysis failed for session %s: %s", session_id, exc)
         return {}
 
 
-# Day windows the business rules define for a payment commitment.
+# Day windows the business rules define for a payment commitment. These are one client's
+# policy, not a law: the disposition labels read "(0-2 days)" and "(3-7 days)" and a desk
+# that works to different windows had to edit code to change them. Settings holds them
+# now, and these stay as the defaults.
 PTP_MAX_DAYS = 2      # 0-2 days  -> PTP
 FPTP_MAX_DAYS = 7     # 3-7 days  -> FPTP; beyond that the promise counts as a refusal
 
 
-def _enforce_disposition_rules(result: Dict[str, Any], session_id: str) -> Dict[str, Any]:
+def _day_windows(app_settings: Optional[Dict[str, Any]] = None) -> tuple[int, int]:
+    """The PTP and FPTP day windows, as configured, falling back to the defaults."""
+    settings_map = app_settings or {}
+    try:
+        ptp = int(settings_map.get("ptp_max_days") or PTP_MAX_DAYS)
+        fptp = int(settings_map.get("fptp_max_days") or FPTP_MAX_DAYS)
+    except (TypeError, ValueError):
+        return PTP_MAX_DAYS, FPTP_MAX_DAYS
+    # A window that ends before the one inside it would put every promise in the outer
+    # bucket, so a bad pair falls back rather than silently reclassifying the book.
+    if ptp < 0 or fptp < ptp:
+        return PTP_MAX_DAYS, FPTP_MAX_DAYS
+    return ptp, fptp
+
+
+def _enforce_disposition_rules(
+    result: Dict[str, Any], session_id: str, windows: Optional[tuple[int, int]] = None,
+) -> Dict[str, Any]:
     """Apply the day-window rules deterministically after the model has answered.
 
     The prompt states these rules, but the model reliably mislabels commitments beyond a
@@ -123,9 +144,10 @@ def _enforce_disposition_rules(result: Dict[str, Any], session_id: str) -> Dict[
     except (TypeError, ValueError):
         days = 0
 
-    if days > FPTP_MAX_DAYS:
+    ptp_max, fptp_max = windows or (PTP_MAX_DAYS, FPTP_MAX_DAYS)
+    if days > fptp_max:
         expected = "RTP"
-    elif days > PTP_MAX_DAYS:
+    elif days > ptp_max:
         expected = "FPTP"
     else:
         expected = code if code in {"PTP", "RTP"} else "PTP"

@@ -13,6 +13,7 @@ import {
   inspectDatasheetFile,
   listTemplates,
   planDatasheetTemplate,
+  previewDatasheet,
   type FormatPlan,
   suggestColumnMappings,
   listDatasheetTemplates,
@@ -30,13 +31,16 @@ import type {
 } from "../api/types";
 import {
   IconChevronDown,
-  IconSearch,
   IconCloudUpload,
   IconDatabase,
+  IconDownload,
   IconFile,
+  IconPencil,
   IconPhone,
+  IconSearch,
   IconTable,
   IconTag,
+  IconTrash,
   IconX,
 } from "../components/Icons";
 
@@ -1243,19 +1247,30 @@ function TemplatesTab({ availablePaths }: { availablePaths: string[] }) {
                 </td>
                 <td className="px-4 py-2">
                   <div className="flex items-center gap-2">
-                    <button onClick={() => setEditingId(t._id)} title="Edit" className="text-slate-400 hover:text-slate-700">
-            <IconX size={16} />
-          </button>
-                    <button onClick={() => handleDelete(t)} title="Delete" className="text-slate-400 hover:text-red-500">
-                      
+                    {/* All three of these were wrong: two showed a cross and one showed
+                        nothing at all, so the only way to tell edit from delete was to
+                        press one. */}
+                    <button
+                      onClick={() => setEditingId(t._id)}
+                      title="Edit this format"
+                      className="rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                    >
+                      <IconPencil size={15} />
                     </button>
                     <button
                       onClick={() => downloadTemplateJson(t)}
-                      title="Download"
-                      className="text-slate-400 hover:text-slate-700"
+                      title="Download as JSON"
+                      className="rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
                     >
-            <IconX size={16} />
-          </button>
+                      <IconDownload size={15} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(t)}
+                      title="Delete this format"
+                      className="rounded p-1 text-slate-400 transition hover:bg-red-50 hover:text-red-500"
+                    >
+                      <IconTrash size={15} />
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -1320,6 +1335,15 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
     setError(null);
     uploadMutation.mutate();
   };
+
+  // A list was a name and a row count. Seeing the first rows is how you tell the right
+  // file went up, and that the numbers in it look like numbers.
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const { data: preview, isLoading: previewLoading } = useQuery({
+    queryKey: ["datasheetPreview", previewId],
+    queryFn: () => previewDatasheet(previewId!, 10),
+    enabled: Boolean(previewId),
+  });
 
   const handleRename = async (ds: Datasheet) => {
     const next = (await dialog.prompt("Rename datasheet", { defaultValue: ds.name }))?.trim();
@@ -1524,6 +1548,12 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
                       Call these
                     </Link>
                     <button
+                      onClick={() => setPreviewId(ds._id)}
+                      className="rounded-md border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+                    >
+                      View
+                    </button>
+                    <button
                       onClick={() => handleRename(ds)}
                       disabled={renameMutation.isPending}
                       className="rounded-md border border-slate-200 px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
@@ -1557,6 +1587,79 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
           </tbody>
         </table>
       </div>
+
+      {previewId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPreviewId(null);
+          }}
+        >
+          <div className="max-h-[80vh] w-full max-w-5xl overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-100 px-5 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  {preview?.name ?? "Loading…"}
+                </h3>
+                {preview && (
+                  <p className="text-xs text-slate-400">
+                    First {preview.rows.length} of {preview.total_rows.toLocaleString("en-IN")}{" "}
+                    row{preview.total_rows === 1 ? "" : "s"} · {preview.columns.length} columns
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={() => setPreviewId(null)}
+                className="rounded p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+              >
+                <IconX size={16} />
+              </button>
+            </div>
+            <div className="max-h-[64vh] overflow-auto">
+              {previewLoading && <p className="p-5 text-sm text-slate-400">Loading…</p>}
+              {preview && (
+                <table className="w-full text-left text-xs">
+                  <thead className="sticky top-0 border-b border-slate-200 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="whitespace-nowrap px-3 py-2 font-semibold">#</th>
+                      <th className="whitespace-nowrap px-3 py-2 font-semibold">Status</th>
+                      {preview.columns.map((c) => (
+                        <th key={c} className="whitespace-nowrap px-3 py-2 font-semibold">
+                          {c}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {preview.rows.map((r) => (
+                      <tr key={r.row_index} className="hover:bg-slate-50/60">
+                        <td className="px-3 py-2 text-slate-400">{r.row_index + 1}</td>
+                        <td className="whitespace-nowrap px-3 py-2">
+                          <span className="text-slate-500">{r.status || "—"}</span>
+                          {r.disposition_code && (
+                            <span className="ml-1.5 font-mono text-[10px] text-slate-400">
+                              {r.disposition_code}
+                            </span>
+                          )}
+                        </td>
+                        {preview.columns.map((c) => (
+                          <td
+                            key={c}
+                            className="max-w-[16rem] truncate px-3 py-2 text-slate-700"
+                            title={String(r.data[c] ?? "")}
+                          >
+                            {String(r.data[c] ?? "")}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
