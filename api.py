@@ -7,7 +7,7 @@ import os
 import csv
 import io as _io
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import secrets
 import traceback
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect, File, Form
@@ -1260,6 +1260,81 @@ async def report_calls_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="' + filename + '"'},
     )
+
+
+def _parse_promise_date(raw: Any) -> Optional[date]:
+    """A promise date as the analysis writes it, or None if it wrote nothing usable."""
+    text = str(raw or "").strip()
+    if not text or text.lower() in ("none", "null", "n/a"):
+        return None
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _promise_amount(raw: Any) -> float:
+    digits = re.sub(r"[^0-9.]", "", str(raw or ""))
+    try:
+        return float(digits)
+    except ValueError:
+        return 0.0
+
+
+@app.get("/analytics/promises")
+async def analytics_promises() -> dict:
+    """Promises grouped by when they fall due.
+
+    A promise to pay is only worth anything if somebody chases it on the day. The date
+    and the amount are already sitting in every scored call; nothing was reading them
+    back out, so the desk had no way to see whose money was due today.
+    """
+    today = datetime.now().date()
+    buckets: Dict[str, List[dict]] = {"overdue": [], "today": [], "tomorrow": [], "later": []}
+    total_amount = 0.0
+
+    cursor = handler.db.sessions.find(
+        {"model_data.ptp_date": {"$exists": True}},
+        {"session_id": 1, "phone_number": 1, "created_at": 1, "disposition_code": 1,
+         "model_data.ptp_date": 1, "model_data.ptp_amt": 1, "model_data.summary": 1},
+    )
+    async for doc in cursor:
+        model = doc.get("model_data") or {}
+        due = _parse_promise_date(model.get("ptp_date"))
+        if due is None:
+            continue
+        amount = _promise_amount(model.get("ptp_amt"))
+        total_amount += amount
+        entry = {
+            "session_id": doc.get("session_id"),
+            "phone_number": doc.get("phone_number"),
+            "due": due.isoformat(),
+            "amount": amount,
+            "summary": model.get("summary") or "",
+            "disposition_code": doc.get("disposition_code"),
+        }
+        delta = (due - today).days
+        if delta < 0:
+            buckets["overdue"].append(entry)
+        elif delta == 0:
+            buckets["today"].append(entry)
+        elif delta == 1:
+            buckets["tomorrow"].append(entry)
+        else:
+            buckets["later"].append(entry)
+
+    for name in buckets:
+        buckets[name].sort(key=lambda e: (e["due"], e["phone_number"] or ""))
+
+    return {
+        "today": today.isoformat(),
+        "counts": {name: len(items) for name, items in buckets.items()},
+        "amount_promised": round(total_amount),
+        # Only the nearest ones travel; the rest are a count until somebody asks.
+        "due_soon": buckets["overdue"][-10:] + buckets["today"] + buckets["tomorrow"],
+    }
 
 
 @app.get("/analytics/summary")

@@ -185,6 +185,26 @@ export const adoptMappingKeys = (sample = 200) =>
 export const getMe = () =>
   api.get<{ role: "admin" | "user"; email: string; pages: string[] }>("/auth/me").then((r) => r.data);
 
+export interface PromiseEntry {
+  session_id: string;
+  phone_number?: string;
+  due: string;
+  amount: number;
+  summary: string;
+  disposition_code?: string;
+}
+
+export interface PromisesDue {
+  today: string;
+  counts: { overdue: number; today: number; tomorrow: number; later: number };
+  amount_promised: number;
+  due_soon: PromiseEntry[];
+}
+
+/** Promises grouped by when they fall due, so the desk can chase the right day. */
+export const getPromisesDue = () =>
+  api.get<PromisesDue>("/analytics/promises").then((r) => r.data);
+
 export interface AnalyticsSummary {
   total: number;
   scored: number;

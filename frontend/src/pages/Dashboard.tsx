@@ -1,10 +1,11 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { dispositionTone } from "../components/Disposition";
+import { dispositionTone, maskPhone } from "../components/Disposition";
 import { OUTCOME_GROUPS, countsForGroups } from "../components/Outcomes";
 import {
   getHealth,
+  getPromisesDue,
   listCampaigns,
   listQueueCalls,
   listSessions,
@@ -104,6 +105,11 @@ export function Dashboard() {
   const { data: sessions } = useQuery({ queryKey: ["sessions"], queryFn: listSessions });
   const { data: queue } = useQuery({ queryKey: ["queue"], queryFn: listQueueCalls });
   const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: listCampaigns });
+  const { data: promises } = useQuery({
+    queryKey: ["promisesDue"],
+    queryFn: getPromisesDue,
+    refetchInterval: 60_000,
+  });
 
   const activeSessions = sessions?.filter((s) => s.active).length ?? 0;
   const queuedCalls = queue?.filter((q) => q.status === "queued" || q.status === "ready").length ?? 0;
@@ -147,11 +153,22 @@ export function Dashboard() {
       .sort((a, b) => b.count - a.count);
     const byGroup = (g: string) =>
       rows.filter((r) => r.group === g).reduce((n, r) => n + r.count, 0);
+    // Answer rate used to come off the campaign counters, which only know about calls a
+    // campaign placed - 32 mostly-empty test campaigns reported 15% while the calls
+    // themselves connected 73% of the time. Count the calls.
+    const UNREACHED = ["NR", "ICR", "RNR", "LM"];
+    const notReached = rows
+      .filter((r) => UNREACHED.includes(r.code))
+      .reduce((n, r) => n + r.count, 0);
+    const reached = analysed - notReached;
     const counts_by_code: Record<string, number> = {};
     for (const [code, n] of counts.entries()) counts_by_code[code] = n;
     return {
       rows,
       analysed,
+      reached,
+      notReached,
+      answerRate: analysed > 0 ? Math.round((reached / analysed) * 100) : null,
       byGroupKey: countsForGroups(counts_by_code),
       won: byGroup("won"),
       pending: byGroup("pending"),
@@ -237,9 +254,10 @@ export function Dashboard() {
         />
         <StatCard
           label="Answer rate"
-          value={campaignStats.connectRate === null ? "—" : `${campaignStats.connectRate}%`}
-          sub={`${campaignStats.completed} answered · ${campaignStats.noAnswer + campaignStats.failed} not reached`}
+          value={outcomes.answerRate === null ? "—" : `${outcomes.answerRate}%`}
+          sub={`${outcomes.reached} spoke · ${outcomes.notReached} not reached`}
           Icon={IconChart}
+          to="/analytics"
         />
         <StatCard
           label="Calls in queue"
@@ -249,6 +267,75 @@ export function Dashboard() {
           to="/calls"
         />
       </div>
+
+      {/* Promises to chase. A promise is only worth something if somebody rings on the
+          day, and the date and amount were already sitting in every scored call with
+          nothing reading them back out. */}
+      {promises && promises.counts.today + promises.counts.tomorrow + promises.counts.overdue > 0 && (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">Promises to chase</h2>
+              <p className="text-xs text-slate-400">
+                ₹{promises.amount_promised.toLocaleString("en-IN")} promised across{" "}
+                {promises.counts.overdue +
+                  promises.counts.today +
+                  promises.counts.tomorrow +
+                  promises.counts.later}{" "}
+                calls
+              </p>
+            </div>
+            <Link
+              to="/sessions?outcome=promise"
+              className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              All promises
+            </Link>
+          </div>
+
+          <div className="mt-4 grid grid-cols-3 gap-3">
+            {[
+              { n: promises.counts.overdue, label: "Overdue", hint: "day has passed",
+                cls: "border-rose-200 bg-rose-50", value: "text-rose-700" },
+              { n: promises.counts.today, label: "Due today", hint: "ring them now",
+                cls: "border-emerald-200 bg-emerald-50", value: "text-emerald-700" },
+              { n: promises.counts.tomorrow, label: "Due tomorrow", hint: "line up for the morning",
+                cls: "border-amber-200 bg-amber-50", value: "text-amber-700" },
+            ].map((b) => (
+              <div key={b.label} className={`rounded-xl border p-4 ${b.cls}`}>
+                <div className={`text-2xl font-semibold ${b.value}`}>{b.n}</div>
+                <div className="mt-0.5 text-xs font-medium text-slate-700">{b.label}</div>
+                <div className="text-[11px] text-slate-400">{b.hint}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 divide-y divide-slate-100">
+            {promises.due_soon.slice(0, 6).map((p) => (
+              <div key={p.session_id} className="flex items-center gap-3 py-2.5">
+                <span className="w-24 shrink-0 font-mono text-xs text-slate-700">
+                  {maskPhone(p.phone_number)}
+                </span>
+                <span className="w-20 shrink-0 text-xs text-slate-500">
+                  {new Date(p.due).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+                </span>
+                <span className="w-16 shrink-0 text-xs font-medium text-slate-700">
+                  {p.amount > 0 ? `₹${p.amount.toLocaleString("en-IN")}` : "—"}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-xs text-slate-500" title={p.summary}>
+                  {p.summary}
+                </span>
+                <Link
+                  to={`/sessions/${p.session_id}`}
+                  className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50"
+                >
+                  Open
+                </Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Call outcomes */}
       <div className="overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
