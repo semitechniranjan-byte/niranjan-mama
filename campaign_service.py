@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 try:
@@ -105,6 +105,90 @@ async def _run_post_call_analysis(
 # now, and these stay as the defaults.
 PTP_MAX_DAYS = 2      # 0-2 days  -> PTP
 FPTP_MAX_DAYS = 7     # 3-7 days  -> FPTP; beyond that the promise counts as a refusal
+
+
+# Outcomes that mean nobody was spoken to. A promise or a refusal is an answer and must
+# never be dialled again; these are the ones worth another try.
+RETRYABLE_CODES = {"NR", "ICR", "RNR", "LM", "NO_ANSWER", "ERROR", "CALL_NOT_PLACED"}
+DEFAULT_MAX_ATTEMPTS = 3
+DEFAULT_RETRY_GAP_HOURS = 4
+# India restricts telemarketing to 09:00-21:00. Calls have gone out at 04:00 from this
+# deployment, which is a compliance problem before it is a courtesy one.
+DEFAULT_CALL_START_HOUR = 9
+DEFAULT_CALL_END_HOUR = 21
+
+
+def _calling_window(app_settings: Optional[Dict[str, Any]] = None) -> tuple[int, int]:
+    """The hours calls may be placed in, as configured."""
+    conf = app_settings or {}
+    try:
+        start = int(conf.get("calling_start_hour", DEFAULT_CALL_START_HOUR))
+        end = int(conf.get("calling_end_hour", DEFAULT_CALL_END_HOUR))
+    except (TypeError, ValueError):
+        return DEFAULT_CALL_START_HOUR, DEFAULT_CALL_END_HOUR
+    if not (0 <= start < end <= 24):
+        return DEFAULT_CALL_START_HOUR, DEFAULT_CALL_END_HOUR
+    return start, end
+
+
+def _within_calling_hours(app_settings: Optional[Dict[str, Any]] = None, now=None) -> bool:
+    start, end = _calling_window(app_settings)
+    return start <= (now or datetime.now()).hour < end
+
+
+def _retry_policy(app_settings: Optional[Dict[str, Any]] = None) -> tuple[int, int]:
+    """How many attempts a number gets, and how long to leave between them."""
+    conf = app_settings or {}
+    try:
+        attempts = int(conf.get("max_attempts", DEFAULT_MAX_ATTEMPTS))
+        gap = int(conf.get("retry_gap_hours", DEFAULT_RETRY_GAP_HOURS))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_ATTEMPTS, DEFAULT_RETRY_GAP_HOURS
+    return max(1, attempts), max(0, gap)
+
+
+def _next_window_open(app_settings: Optional[Dict[str, Any]] = None) -> datetime:
+    """The next moment calls may go out, in UTC as the rows store it."""
+    start, end = _calling_window(app_settings)
+    now = datetime.now()
+    opens = now.replace(hour=start, minute=0, second=0, microsecond=0)
+    if now.hour >= end or now >= opens:
+        if now.hour >= start:
+            opens += timedelta(days=1)
+    # Rows are stored in UTC; the window is local, so carry the offset across.
+    return datetime.utcnow() + (opens - now)
+
+
+async def _schedule_retry(db, datasheet_id: str, row_index: int, row: Optional[dict]) -> None:
+    """Book another attempt for a row nobody answered, if it has attempts left.
+
+    Thirty percent of a list ends this way and every one of them used to stop there - the
+    campaign page said as much: each row is called once. A number that did not pick up at
+    ten in the morning is a different proposition at four in the afternoon.
+    """
+    if not row:
+        return
+    code = str(row.get("disposition_code") or "").upper()
+    if code and code not in RETRYABLE_CODES:
+        return
+    conf = await db.get_app_settings()
+    max_attempts, gap_hours = _retry_policy(conf)
+    attempts = int(row.get("attempt_count") or 1)
+    if attempts >= max_attempts:
+        await db.update_datasheet_row(
+            datasheet_id, row_index, attempt_count=attempts, next_attempt_at=None
+        )
+        return
+    await db.update_datasheet_row(
+        datasheet_id,
+        row_index,
+        attempt_count=attempts,
+        next_attempt_at=datetime.utcnow() + timedelta(hours=gap_hours),
+    )
+    logger.info(
+        "RETRY row %s of %s booked for attempt %s in %sh (%s)",
+        row_index, datasheet_id, attempts + 1, gap_hours, code or "no outcome",
+    )
 
 
 def _day_windows(app_settings: Optional[Dict[str, Any]] = None) -> tuple[int, int]:
@@ -270,6 +354,22 @@ async def _run_one_row(
                 )
                 return
 
+            # Nobody wants a collections call at four in the morning, and in India nobody
+            # is allowed to place one. A row caught outside the window is booked for the
+            # next opening rather than dialled or dropped.
+            conf = await db.get_app_settings()
+            if not _within_calling_hours(conf):
+                start, end = _calling_window(conf)
+                logger.warning(
+                    "Campaign %s: row %s held, outside calling hours %02d:00-%02d:00",
+                    campaign_id, row_index, start, end,
+                )
+                await db.update_datasheet_row(
+                    datasheet_id, row_index, status="waiting",
+                    next_attempt_at=_next_window_open(conf),
+                )
+                return
+
             # Building the handler used to sit outside the try below. Anything it raised
             # escaped to the gather that started this row, which logs and moves on, so the
             # counters stayed on "queued" and the run reported completed having dialled
@@ -375,12 +475,15 @@ async def _run_one_row(
                 refreshed_row = await db.get_datasheet_row(datasheet_id, row_index)
                 final_status = (refreshed_row or {}).get("status") or "failed"
                 await db.shift_campaign_stat(campaign_id, "calling", final_status)
+                await _schedule_retry(db, datasheet_id, row_index, refreshed_row)
             finally:
                 if session_id:
                     await call_registry.unregister_call(session_id)
 
 
-async def run_campaign(shared_handler, campaign_id: str) -> None:
+async def run_campaign(
+    shared_handler, campaign_id: str, retries_only: bool = False,
+) -> None:
     set_control_state(campaign_id, RUNNING)
     if campaign_id in _running_campaigns:
         return
@@ -408,7 +511,20 @@ async def run_campaign(shared_handler, campaign_id: str) -> None:
 
         datasheet_id = datasheet["_id"]
         rows = datasheet.get("rows", [])
-        limit = 1 if campaign.get("mode") == "test" else len(rows)
+        if retries_only:
+            # A sweep dials only what is due, so a campaign that finished days ago does not
+            # start again from the top because one row came round for a second attempt.
+            now = datetime.utcnow()
+            rows = [
+                r for r in rows
+                if r.get("next_attempt_at") and r["next_attempt_at"] <= now
+            ]
+            if not rows:
+                return
+            logger.warning(
+                "RETRY campaign %s: %s row(s) due for another attempt", campaign_id, len(rows)
+            )
+        limit = len(rows) if retries_only else (1 if campaign.get("mode") == "test" else len(rows))
         phone_column = template.get("phone_column")
         # A concrete language pins the whole run; "auto" lets each row pick its own via
         # the template's language column.
@@ -518,6 +634,8 @@ async def run_campaign(shared_handler, campaign_id: str) -> None:
                 )
                 failures.append(f"row {row.get('row_index')}: {type(outcome).__name__}: {outcome}")
 
+        if retries_only:
+            return
         stopped = control_state(campaign_id) == STOPPED
         # A run that dialled nobody used to finish saying "completed" with no hint that
         # anything had gone wrong - the reason existed only in a log nobody reads. Put the

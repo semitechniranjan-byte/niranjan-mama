@@ -25,7 +25,7 @@ const RANGES = [
 
 const COLUMNS = [
   "Date", "Time", "Phone", "Direction", "Status", "Outcome", "Promise date",
-  "Promise time", "Promise amount", "Cooperation", "Interruptions", "Turns",
+  "Promise time", "Promise amount", "Cooperation", "Interruptions", "Attempts", "Turns",
   "Duration (s)", "Language", "Use case", "Ended by", "Summary", "Customer said",
   "Session id",
 ];

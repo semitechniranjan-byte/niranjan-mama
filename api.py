@@ -158,6 +158,42 @@ async def auth_me(x_api_key: Optional[str] = Header(None)) -> dict:
     return {"role": role, "email": email, "pages": ROLE_PAGES[role]}
 
 
+# How often the retry sweep looks for rows that have come due.
+RETRY_SWEEP_SECONDS = 300
+
+
+async def _retry_sweeper() -> None:
+    """Dial the rows that have come round for another attempt.
+
+    A retry happens hours after the call that earned it, so it cannot ride on the run that
+    placed the first one - that run has finished, and a process restart would lose it
+    anyway. The rows carry their own due time; this looks for them, and only inside the
+    hours calls are allowed to go out.
+    """
+    await asyncio.sleep(30)  # let the app finish starting before the first sweep
+    while True:
+        try:
+            settings_doc = await handler.db.get_app_settings()
+            if campaign_service._within_calling_hours(settings_doc):
+                now = datetime.utcnow()
+                due = await handler.db.datasheets.find(
+                    {"rows.next_attempt_at": {"$lte": now}}, {"_id": 1}
+                ).to_list(200)
+                for sheet in due:
+                    campaigns = await handler.db.campaigns.find(
+                        {"datasheet_id": str(sheet["_id"])}
+                    ).sort("created_at", -1).to_list(1)
+                    if not campaigns:
+                        continue
+                    campaign_id = str(campaigns[0]["_id"])
+                    if campaign_service.is_campaign_running(campaign_id):
+                        continue
+                    await campaign_service.run_campaign(handler, campaign_id, retries_only=True)
+        except Exception as exc:
+            logger.warning("Retry sweep failed: %s", exc)
+        await asyncio.sleep(RETRY_SWEEP_SECONDS)
+
+
 async def _release_stale_campaigns() -> None:
     """Nothing survives a restart, so no record may still claim to be dialling.
 
@@ -228,6 +264,7 @@ async def startup() -> None:
     _log_configuration_report()
     await _release_stale_campaigns()
     await handler.initialize(persist_session=False)
+    asyncio.create_task(_retry_sweeper())
     await _initialize_analysis_support()
 
 
@@ -1487,6 +1524,7 @@ REPORT_COLUMNS = [
     ("Promise amount", lambda s, m, n: _clean(m.get("ptp_amt"))),
     ("Cooperation", lambda s, m, n: _clean(m.get("user_cooperation_level"))),
     ("Interruptions", lambda s, m, n: m.get("interruption_count", s.get("interruption_count", 0))),
+    ("Attempts", lambda s, m, n: s.get("attempt_count") or 1),
     ("Turns", lambda s, m, n: n),
     ("Duration (s)", lambda s, m, n: _duration_seconds(s)),
     ("Language", lambda s, m, n: s.get("language") or _clean(m.get("language_detected"))),

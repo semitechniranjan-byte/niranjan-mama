@@ -161,6 +161,15 @@ export interface AppSettings {
   silence_first_seconds?: number;
   silence_second_seconds?: number;
   max_call_seconds?: number;
+  /** Hours calls may be placed in. India allows 09:00-21:00 for telemarketing. */
+  calling_start_hour?: number;
+  calling_end_hour?: number;
+  /** How many times a number nobody answered is tried, and how long between tries. */
+  max_attempts?: number;
+  retry_gap_hours?: number;
+  /** Day windows that decide PTP against FPTP. */
+  ptp_max_days?: number;
+  fptp_max_days?: number;
 }
 
 export interface AppSettingsResponse {

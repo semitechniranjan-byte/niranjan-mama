@@ -1,13 +1,15 @@
 import { useEffect, useState, type ComponentType } from "react";
 import {
+  IconClock,
   IconCpu,
-  IconMic,
-  IconSpeaker,
+  IconHourglass,
   IconLink,
   IconLogs,
+  IconMic,
   IconPhone,
   IconPlug,
   IconSettings,
+  IconSpeaker,
   IconTag,
   IconWaveform,
 } from "../components/Icons";
@@ -481,6 +483,73 @@ export function Settings() {
                 value={draft.max_call_seconds}
                 onChange={(v) => set("max_call_seconds", Number(v))}
                 hint="Hard cap on any single call."
+              />
+            </div>
+          </Card>
+
+          <Card
+            Icon={IconClock}
+            accent="bg-emerald-50 text-emerald-600"
+            title="When calls go out, and how often"
+            subtitle="Calls have gone out at 4am from this deployment. India allows telemarketing between 09:00 and 21:00, and a row caught outside the window waits for the next opening rather than being dropped."
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field
+                label="Start calling at"
+                type="number"
+                suffix="hr"
+                value={draft.calling_start_hour ?? 9}
+                onChange={(v) => set("calling_start_hour", Number(v))}
+                hint="24-hour clock. Nothing dials before this."
+              />
+              <Field
+                label="Stop calling at"
+                type="number"
+                suffix="hr"
+                value={draft.calling_end_hour ?? 21}
+                onChange={(v) => set("calling_end_hour", Number(v))}
+                hint="Nothing dials at or after this hour."
+              />
+              <Field
+                label="Attempts per number"
+                type="number"
+                value={draft.max_attempts ?? 3}
+                onChange={(v) => set("max_attempts", Number(v))}
+                hint="Only for calls nobody answered. A promise or a refusal is never dialled again."
+              />
+              <Field
+                label="Wait between attempts"
+                type="number"
+                suffix="hr"
+                value={draft.retry_gap_hours ?? 4}
+                onChange={(v) => set("retry_gap_hours", Number(v))}
+                hint="A number that did not pick up at ten is a different proposition at four."
+              />
+            </div>
+          </Card>
+
+          <Card
+            Icon={IconHourglass}
+            accent="bg-purple-50 text-purple-600"
+            title="Promise windows"
+            subtitle="How soon a promise has to be to count as a promise. The outcome labels quote these, and until now the rule behind them was fixed in code."
+          >
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field
+                label="Promise to pay, within"
+                type="number"
+                suffix="days"
+                value={draft.ptp_max_days ?? 2}
+                onChange={(v) => set("ptp_max_days", Number(v))}
+                hint="Anything sooner than this is PTP."
+              />
+              <Field
+                label="Future promise, within"
+                type="number"
+                suffix="days"
+                value={draft.fptp_max_days ?? 7}
+                onChange={(v) => set("fptp_max_days", Number(v))}
+                hint="Beyond this a promise counts as a refusal."
               />
             </div>
           </Card>
