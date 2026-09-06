@@ -24,7 +24,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
   {
     heading: "Operations",
     items: [
-      { to: "/campaigns", label: "Bulk Calls", Icon: IconCampaign },
+      { to: "/campaigns", label: "Auto Dialer", Icon: IconCampaign },
       { to: "/sessions", label: "Conversations", Icon: IconMessage },
       { to: "/calls", label: "Test Call", Icon: IconPhone },
       { to: "/agents", label: "Agents", Icon: IconUsers },
@@ -36,7 +36,7 @@ const NAV_SECTIONS: { heading: string; items: NavItem[] }[] = [
     heading: "Configuration",
     items: [
       { to: "/templates", label: "Templates", Icon: IconTemplate },
-      { to: "/datasheets", label: "Datasheets", Icon: IconDatabase },
+      { to: "/datasheets", label: "Call Lists", Icon: IconDatabase },
       { to: "/settings", label: "Settings", Icon: IconSettings },
     ],
   },

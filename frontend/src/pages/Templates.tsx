@@ -49,7 +49,7 @@ function useSingleTemplate() {
 
 const LANGUAGE_TABS = [
   { key: "prompt", label: "Prompt", multiline: true, hint: "System prompt the LLM follows for this language." },
-  { key: "greeting", label: "Greeting", multiline: true, hint: "Opening line. Placeholders like {CUSTOMER_NAME} are filled from the datasheet row." },
+  { key: "greeting", label: "Greeting", multiline: true, hint: "Opening line. Placeholders like {CUSTOMER_NAME} are filled from the call list row." },
   { key: "analysis_prompt", label: "Analysis Prompt", multiline: true, hint: "Post-call prompt that returns JSON into model_data. Use {conversation_text}." },
 ] as const;
 
@@ -321,7 +321,7 @@ function LanguageRoutingCard({
   const mapping = template.language_column_mapping ?? {};
 
   const addMapping = async () => {
-    const value = (await dialog.prompt("Column value in the datasheet", {
+    const value = (await dialog.prompt("Column value in the call list", {
       placeholder: "TAMIL",
     }))?.trim().toUpperCase();
     if (!value) return;
@@ -332,7 +332,7 @@ function LanguageRoutingCard({
     <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
       <h3 className="text-sm font-semibold text-slate-900">Automatic language routing</h3>
       <p className="mt-1 text-xs text-slate-400">
-        Used only when a bulk call runs with language = <strong>Auto</strong>. Each row's
+        Used only when a dialler run is set to language = <strong>Auto</strong>. Each row's
         language is read from this datasheet column. When you start it in a specific language
         instead, this is ignored and the whole run uses that one language.
       </p>
@@ -526,7 +526,7 @@ export function Templates() {
         <h1 className="text-xl font-semibold text-slate-900">Templates</h1>
         <p className="mt-1 text-sm text-slate-500">
           Each <strong>use case</strong> holds one prompt/greeting/analysis set per{" "}
-          <strong>language</strong>. Run a bulk call in a single language, or set it to Auto to
+          <strong>language</strong>. Run the dialler in a single language, or set it to Auto to
           pick each row's language from the datasheet.
         </p>
       </div>

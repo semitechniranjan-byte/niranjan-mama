@@ -396,7 +396,7 @@ function AddMappingModal({
           {filtered.length === 0 && (
             <p className="px-3 py-4 text-center text-xs text-slate-400">
               {availablePaths.length === 0
-                ? "No mapping keys configured yet — add some in the Mapping Keys tab."
+                ? "No result fields configured yet — add some in the Result Fields tab."
                 : "No matching fields — you can still type a custom path and press Enter."}
             </p>
           )}
@@ -1246,12 +1246,12 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-slate-900">Datasheets</h2>
+        <h2 className="text-lg font-semibold text-slate-900">Your call lists</h2>
         <button
           onClick={() => setIsUploadOpen(true)}
           className="flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700"
         >
-          Upload Datasheet
+          Upload List
         </button>
       </div>
 
@@ -1303,7 +1303,7 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
                 </label>
 
                 <label className="block text-xs font-medium text-slate-600">
-                  Datasheet name
+                  List name
                   <input
                     value={name}
                     onChange={(e) => setName(e.target.value)}
@@ -1445,23 +1445,23 @@ function DatasheetsSection({ templates }: { templates: DatasheetTemplate[] }) {
   );
 }
 
-const PAGE_TABS = ["Uploaded Datasheets", "Templates", "Mapping Keys"] as const;
+const PAGE_TABS = ["Your Lists", "List Formats", "Result Fields"] as const;
 type PageTab = (typeof PAGE_TABS)[number];
 
 export function DatasheetTemplates() {
   const { templates, isLoading } = useDatasheetTemplates();
   const { categories: mappingKeyCategories } = useMappingKeys();
   const availablePaths = useMemo(() => pathsFromCategories(mappingKeyCategories), [mappingKeyCategories]);
-  const [activeTab, setActiveTab] = useState<PageTab>("Uploaded Datasheets");
+  const [activeTab, setActiveTab] = useState<PageTab>("Your Lists");
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <div>
-          <h1 className="text-xl font-semibold text-slate-900">Datasheets</h1>
+          <h1 className="text-xl font-semibold text-slate-900">Call Lists</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Upload and manage datasheets, manage multiple templates (required columns / column
-            mappings / attempt columns), and maintain the mapping-key catalog — all in one place.
+            The people to call, the shape their file comes in, and which call results get
+            written back into it.
           </p>
         </div>
       </div>
@@ -1484,11 +1484,11 @@ export function DatasheetTemplates() {
 
       {isLoading && <p className="text-sm text-slate-500">Loading...</p>}
 
-      {activeTab === "Uploaded Datasheets" && <DatasheetsSection templates={templates} />}
+      {activeTab === "Your Lists" && <DatasheetsSection templates={templates} />}
 
-      {activeTab === "Templates" && <TemplatesTab availablePaths={availablePaths} />}
+      {activeTab === "List Formats" && <TemplatesTab availablePaths={availablePaths} />}
 
-      {activeTab === "Mapping Keys" && <MappingKeysTab />}
+      {activeTab === "Result Fields" && <MappingKeysTab />}
     </div>
   );
 }

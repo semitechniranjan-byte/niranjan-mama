@@ -215,15 +215,15 @@ export function Campaigns() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 shadow-sm"><h1 className="text-lg font-semibold tracking-tight text-slate-900">Bulk Calls</h1>
+        <div className="rounded-lg border border-slate-200 bg-white px-5 py-4 shadow-sm"><h1 className="text-lg font-semibold tracking-tight text-slate-900">Auto Dialer</h1>
           <p className="mt-0.5 text-sm text-slate-500">
-            Call a whole datasheet, several at a time.
+            Call a whole list, several numbers at a time.
           </p></div>
         <button
           onClick={() => setIsModalOpen(true)}
           className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
         >
-          New Bulk Call
+          New Run
         </button>
       </div>
 
@@ -238,7 +238,7 @@ export function Campaigns() {
             className="w-full max-w-lg space-y-3 rounded-lg border border-slate-200 bg-white p-5 shadow-xl"
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">Start a new bulk call</h2>
+              <h2 className="text-sm font-semibold text-slate-900">Start a new run</h2>
               <button
                 type="button"
                 onClick={() => setIsModalOpen(false)}
@@ -270,7 +270,7 @@ export function Campaigns() {
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 >
                   <option value="test">Test (first row only)</option>
-                  <option value="production">Production (full datasheet)</option>
+                  <option value="production">Production (whole list)</option>
                 </select>
               </label>
 
@@ -281,7 +281,7 @@ export function Campaigns() {
                   onChange={(e) => setDatasheetId(e.target.value)}
                   className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
                 >
-                  <option value="">Select a datasheet...</option>
+                  <option value="">Select a list...</option>
                   {(datasheets ?? []).map((ds) => (
                     <option key={ds._id} value={ds._id}>
                       {ds.name} ({ds.row_count} rows)
