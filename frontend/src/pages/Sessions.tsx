@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
 import { DispositionBadge, maskPhone } from "../components/Disposition";
 import { IconChevronRight, IconEye, IconSearch } from "../components/Icons";
-import { getDispositions, listSessionPage } from "../api/endpoints";
+import { getDispositions, listSessionPage, recallSession } from "../api/endpoints";
+import { groupByKey } from "../components/Outcomes";
+import { IconRefresh } from "../components/Icons";
 
 const PAGE_SIZE = 25;
 
@@ -14,6 +16,24 @@ function formatLength(seconds: number): string {
 }
 
 export function Sessions() {
+  const queryClient = useQueryClient();
+  // Arriving from a dashboard tile: that tile stands for a set of codes, and this is the
+  // list behind the number on it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const outcome = groupByKey(searchParams.get("outcome"));
+
+  const [recalling, setRecalling] = useState<string | null>(null);
+  const [recallNote, setRecallNote] = useState<string | null>(null);
+  const recallMutation = useMutation({
+    mutationFn: recallSession,
+    onSuccess: () => {
+      setRecallNote("Calling now — it will appear at the top of this list.");
+      queryClient.invalidateQueries({ queryKey: ["sessionPage"] });
+    },
+    onError: (err: Error) => setRecallNote(`Could not place the call: ${err.message}`),
+    onSettled: () => setRecalling(null),
+  });
+
   const [statusFilter, setStatusFilter] = useState("all");
   const [directionFilter, setDirectionFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -28,10 +48,10 @@ export function Sessions() {
   }, [search]);
 
   // Any filter change invalidates the current offset.
-  useEffect(() => setPage(0), [statusFilter, directionFilter, debounced]);
+  useEffect(() => setPage(0), [statusFilter, directionFilter, debounced, outcome?.key]);
 
   const { data, isLoading, error, isFetching } = useQuery({
-    queryKey: ["sessionPage", page, statusFilter, directionFilter, debounced],
+    queryKey: ["sessionPage", page, statusFilter, directionFilter, debounced, outcome?.key],
     queryFn: () =>
       listSessionPage({
         limit: PAGE_SIZE,
@@ -39,6 +59,7 @@ export function Sessions() {
         status: statusFilter,
         direction: directionFilter,
         search: debounced || undefined,
+        disposition: outcome ? outcome.codes.join(",") : undefined,
       }),
     // Keeps the current page on screen while the next loads, instead of flashing empty.
     placeholderData: keepPreviousData,
@@ -64,10 +85,34 @@ export function Sessions() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">Conversations</h1>
             <p className="mt-0.5 text-sm text-slate-500">
-              {total.toLocaleString("en-IN")} call{total === 1 ? "" : "s"} recorded
+              {outcome ? (
+                <>
+                  {total.toLocaleString("en-IN")} {outcome.label.toLowerCase()}
+                  <span className="ml-1 font-mono text-xs text-slate-400">
+                    {outcome.codes.join(" · ")}
+                  </span>
+                </>
+              ) : (
+                <>
+                  {total.toLocaleString("en-IN")} call{total === 1 ? "" : "s"} recorded
+                </>
+              )}
             </p>
           </div>
-          {isFetching && <span className="text-xs text-slate-400">Refreshing…</span>}
+          <div className="flex items-center gap-3">
+            {outcome && (
+              <button
+                onClick={() => {
+                  searchParams.delete("outcome");
+                  setSearchParams(searchParams, { replace: true });
+                }}
+                className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50"
+              >
+                Show all calls
+              </button>
+            )}
+            {isFetching && <span className="text-xs text-slate-400">Refreshing…</span>}
+          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -101,6 +146,7 @@ export function Sessions() {
             <option value="inbound">Inbound</option>
           </select>
         </div>
+        {recallNote && <p className="mt-3 text-xs text-slate-500">{recallNote}</p>}
       </div>
 
       <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
@@ -113,7 +159,7 @@ export function Sessions() {
                 <th className="px-4 py-2.5 font-semibold">What happened</th>
                 <th className="px-4 py-2.5 font-semibold">Length</th>
                 <th className="px-4 py-2.5 font-semibold">When</th>
-                <th className="px-4 py-2.5 text-right font-semibold">Open</th>
+                <th className="px-4 py-2.5 text-right font-semibold">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -156,14 +202,29 @@ export function Sessions() {
                   <td className="px-4 py-2.5 text-xs text-slate-500">
                     {s.created_at ? new Date(s.created_at).toLocaleString() : "-"}
                   </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <Link
-                      to={`/sessions/${s.session_id}`}
-                      className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-indigo-700"
-                    >
-                      <IconEye size={13} />
-                      View
-                    </Link>
+                  <td className="px-4 py-2.5">
+                    <div className="flex justify-end gap-1.5">
+                      <button
+                        onClick={() => {
+                          setRecallNote(null);
+                          setRecalling(s.session_id);
+                          recallMutation.mutate(s.session_id);
+                        }}
+                        disabled={s.active || recalling === s.session_id}
+                        title={s.active ? "That call is still running" : "Call this customer again"}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-30"
+                      >
+                        <IconRefresh size={12} />
+                        {recalling === s.session_id ? "Calling…" : "Call again"}
+                      </button>
+                      <Link
+                        to={`/sessions/${s.session_id}`}
+                        className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-indigo-700"
+                      >
+                        <IconEye size={13} />
+                        View
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}

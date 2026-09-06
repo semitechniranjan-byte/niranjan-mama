@@ -1,12 +1,12 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { DispositionCard, dispositionTone } from "../components/Disposition";
+import { dispositionTone } from "../components/Disposition";
+import { OUTCOME_GROUPS, countsForGroups } from "../components/Outcomes";
 import {
   getHealth,
   listCampaigns,
   listQueueCalls,
-  getDispositions,
   listSessions,
 } from "../api/endpoints";
 import {
@@ -104,11 +104,6 @@ export function Dashboard() {
   const { data: sessions } = useQuery({ queryKey: ["sessions"], queryFn: listSessions });
   const { data: queue } = useQuery({ queryKey: ["queue"], queryFn: listQueueCalls });
   const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: listCampaigns });
-  const { data: dispositions } = useQuery({ queryKey: ["dispositions"], queryFn: getDispositions });
-  const dispositionLabels = useMemo(
-    () => Object.fromEntries((dispositions ?? []).map((d) => [d.value, d.label])),
-    [dispositions],
-  );
 
   const activeSessions = sessions?.filter((s) => s.active).length ?? 0;
   const queuedCalls = queue?.filter((q) => q.status === "queued" || q.status === "ready").length ?? 0;
@@ -152,9 +147,12 @@ export function Dashboard() {
       .sort((a, b) => b.count - a.count);
     const byGroup = (g: string) =>
       rows.filter((r) => r.group === g).reduce((n, r) => n + r.count, 0);
+    const counts_by_code: Record<string, number> = {};
+    for (const [code, n] of counts.entries()) counts_by_code[code] = n;
     return {
       rows,
       analysed,
+      byGroupKey: countsForGroups(counts_by_code),
       won: byGroup("won"),
       pending: byGroup("pending"),
       lost: byGroup("lost"),
@@ -272,32 +270,29 @@ export function Dashboard() {
         </div>
 
         {outcomes.analysed > 0 ? (
-          <>
-            <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-              {[
-                { label: "Promise to pay", n: outcomes.won, cls: "border-emerald-200 bg-emerald-50 text-emerald-700" },
-                { label: "Follow up", n: outcomes.pending, cls: "border-amber-200 bg-amber-50 text-amber-700" },
-                { label: "Refused", n: outcomes.lost, cls: "border-rose-200 bg-rose-50 text-rose-700" },
-                { label: "Not reached", n: outcomes.unreached, cls: "border-slate-200 bg-slate-50 text-slate-600" },
-              ].map((b) => (
-                <div key={b.label} className={`rounded-xl border p-4 ${b.cls}`}>
-                  <div className="text-2xl font-semibold">{b.n}</div>
-                  <div className="text-xs font-medium opacity-80">{b.label}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {outcomes.rows.map((r) => (
-                <DispositionCard
-                  key={r.code}
-                  code={r.code}
-                  label={dispositionLabels[r.code] || r.code}
-                  count={r.count}
-                />
-              ))}
-            </div>
-          </>
+          /* Six tiles, each a link into the calls behind it. A number nobody can act on
+             is just decoration; from the list a caller can be dialled again or read. */
+          <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
+            {OUTCOME_GROUPS.map((g) => {
+              const n = outcomes.byGroupKey[g.key] ?? 0;
+              return (
+                <Link
+                  key={g.key}
+                  to={`/sessions?outcome=${g.key}`}
+                  className={`group rounded-xl border p-4 transition ${g.tile}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className={`text-2xl font-semibold ${g.value}`}>{n}</div>
+                    <span className="text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-slate-500">
+                      <IconArrowRight size={14} />
+                    </span>
+                  </div>
+                  <div className="mt-0.5 text-xs font-medium text-slate-700">{g.label}</div>
+                  <div className="text-[11px] text-slate-400">{g.hint}</div>
+                </Link>
+              );
+            })}
+          </div>
         ) : (
           <p className="mt-4 rounded-lg border border-dashed border-slate-200 p-6 text-center text-sm text-slate-400">
             No analysed calls yet. Make a test call and the outcome will show up here.

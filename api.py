@@ -567,6 +567,7 @@ async def list_sessions(
     status: Optional[str] = None,
     direction: Optional[str] = None,
     search: Optional[str] = None,
+    disposition: Optional[str] = None,
 ) -> dict:
     """One page of sessions, newest first.
 
@@ -577,6 +578,12 @@ async def list_sessions(
     everything first.
     """
     query: Dict[str, Any] = {}
+    # A dashboard card stands for a group of codes - a promise is PTP or FPTP - so the
+    # filter takes a list and the card becomes one query rather than several.
+    if disposition and disposition != "all":
+        codes = [c.strip().upper() for c in disposition.split(",") if c.strip()]
+        if codes:
+            query["disposition_code"] = {"$in": codes}
     if status and status != "all":
         query["status"] = status
     if direction and direction != "all":
@@ -622,6 +629,34 @@ async def get_session(session_id: str) -> dict:
         raise HTTPException(status_code=404, detail="session not found")
     session["_id"] = str(session.get("_id"))
     return {"session": session}
+
+
+@app.post("/sessions/{session_id}/recall", dependencies=[Depends(require_api_key)])
+async def recall_session(session_id: str) -> dict:
+    """Dial the same customer again, on the same script and with the same details.
+
+    A desk works a list: the promises get chased, the unreachable get another try. Doing
+    that meant copying a number off one screen into the test-call form and typing every
+    placeholder back in by hand. The session already holds all of it.
+    """
+    session = await handler.db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+    number = (session.get("phone_number") or "").strip()
+    if not number or number == "unknown":
+        raise HTTPException(status_code=400, detail="this session has no number to call")
+    if session.get("active"):
+        raise HTTPException(status_code=409, detail="that call is still running")
+
+    return await create_outbound_call(
+        OutboundCallRequest(
+            to_number=number,
+            format_values=session.get("format_values") or {},
+            dynamic_fields=session.get("dynamic_fields") or {},
+            use_case=session.get("use_case"),
+            language=session.get("language"),
+        )
+    )
 
 
 @app.get("/sessions/{session_id}/messages")

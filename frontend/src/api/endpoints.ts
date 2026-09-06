@@ -44,7 +44,13 @@ export const listSessionPage = (params: {
   status?: string;
   direction?: string;
   search?: string;
+  /** One or more disposition codes, comma separated - an outcome tile is a group of them. */
+  disposition?: string;
 }) => api.get<SessionPage>("/sessions", { params }).then((r) => r.data);
+
+/** Dial the same customer again on the same script, with the details already on file. */
+export const recallSession = (id: string) =>
+  api.post<{ session_id?: string }>(`/sessions/${id}/recall`).then((r) => r.data);
 
 /** Small recent slice, for dashboard summaries that do not need the whole history. */
 export const listSessions = () =>
