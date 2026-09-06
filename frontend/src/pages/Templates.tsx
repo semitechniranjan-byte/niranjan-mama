@@ -53,10 +53,18 @@ const LANGUAGE_TABS = [
   { key: "analysis_prompt", label: "Analysis Prompt", multiline: true, hint: "Post-call prompt that returns JSON into model_data. Use {conversation_text}." },
 ] as const;
 
+/**
+ * The per-language technical settings.
+ *
+ * The voice id is deliberately not here. It used to be, and the matrix at the bottom of
+ * the page edited the same field for every use case and language at once - two editors
+ * for one value, each with its own draft and its own Save, so whichever was saved second
+ * silently overwrote the first. The matrix keeps it: seeing every voice together is the
+ * reason that view exists, and it can fill a whole row at once.
+ */
 const VOICE_FIELDS = [
   { key: "stt_lan_code", label: "Recognition language code", placeholder: "hi" },
   { key: "tts_lan_code", label: "Speech language code", placeholder: "hi" },
-  { key: "tts_voice_id", label: "Voice ID", placeholder: "Voice identifier" },
   { key: "tts_model_id", label: "Voice model", placeholder: "Default model" },
 ] as const;
 
@@ -126,10 +134,21 @@ function LanguageEditor({
                 value={(draft[f.key as keyof LanguageConfig] as string) ?? ""}
                 onChange={(e) => set(f.key as keyof LanguageConfig, e.target.value)}
                 placeholder={f.placeholder}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                className="mt-1 h-9 w-full rounded-lg border border-slate-300 px-2.5 text-sm transition focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100"
               />
             </label>
           ))}
+          <div className="sm:col-span-2">
+            <div className="text-xs font-medium text-slate-600">Voice</div>
+            <div className="mt-1 flex h-9 items-center gap-2 rounded-lg border border-dashed border-slate-300 bg-slate-50 px-2.5">
+              <span className="truncate font-mono text-xs text-slate-600">
+                {draft.tts_voice_id || "default voice from Settings"}
+              </span>
+              <span className="ml-auto shrink-0 text-[11px] text-slate-400">
+                set below, in Voices by use case &amp; language
+              </span>
+            </div>
+          </div>
         </div>
       )}
 
@@ -206,7 +225,7 @@ function VoiceMatrixCard({
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Voices by use case &amp; language</h3>
           <p className="text-xs text-slate-400">
-            Every voice ID in one place. Blank cells fall back to the default voice in Settings.
+            The one place voices are set. A blank cell uses the default voice from Settings.
           </p>
         </div>
         {dirty && (
