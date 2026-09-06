@@ -108,6 +108,9 @@ export function Dashboard() {
   const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: listCampaigns });
   const promiseClient = useQueryClient();
   const [calling, setCalling] = useState<string | null>(null);
+  // Which of the three promise piles is open. A count nobody can open is a number to
+  // look at; the names behind it are what gets worked.
+  const [dueFilter, setDueFilter] = useState<"overdue" | "today" | "tomorrow" | null>(null);
   const [callNote, setCallNote] = useState<string | null>(null);
   // Chasing a promise means ringing the person back, so the row that names them is where
   // the call belongs - not a number to copy into the test-call form.
@@ -158,6 +161,29 @@ export function Dashboard() {
   // What a collections client actually looks at: how many calls produced a promise to
   // pay, how many were refused, how many never reached anyone. Derived from the sessions
   // already loaded, so this costs no extra request.
+  /**
+   * The promises behind whichever pile is open, or the nearest few when none is.
+   *
+   * The piles are worked out from the dates rather than sent as three lists, because
+   * "today" is the server's today and a browser in another timezone would disagree about
+   * which pile a date belongs in.
+   */
+  const shownPromises = useMemo(() => {
+    const all = promises?.due_soon ?? [];
+    if (!dueFilter || !promises) return all.slice(0, 6);
+    const today = promises.today;
+    const next = new Date(`${today}T00:00:00`);
+    next.setDate(next.getDate() + 1);
+    const tomorrow = next.toISOString().slice(0, 10);
+    return all.filter((p) =>
+      dueFilter === "overdue"
+        ? p.due < today
+        : dueFilter === "today"
+          ? p.due === today
+          : p.due === tomorrow,
+    );
+  }, [promises, dueFilter]);
+
   const outcomes = useMemo(() => {
     const counts = new Map<string, number>();
     let analysed = 0;
@@ -367,26 +393,50 @@ export function Dashboard() {
           </div>
 
           <div className="mt-4 grid grid-cols-3 gap-3">
-            {[
-              { n: promises.counts.overdue, label: "Overdue", hint: "day has passed",
-                cls: "border-rose-200 bg-rose-50", value: "text-rose-700" },
-              { n: promises.counts.today, label: "Due today", hint: "ring them now",
-                cls: "border-emerald-200 bg-emerald-50", value: "text-emerald-700" },
-              { n: promises.counts.tomorrow, label: "Due tomorrow", hint: "line up for the morning",
-                cls: "border-amber-200 bg-amber-50", value: "text-amber-700" },
-            ].map((b) => (
-              <div key={b.label} className={`rounded-xl border p-4 ${b.cls}`}>
+            {([
+              { key: "overdue" as const, n: promises.counts.overdue, label: "Overdue",
+                hint: "day has passed", cls: "border-rose-200 bg-rose-50",
+                on: "ring-2 ring-rose-400", value: "text-rose-700" },
+              { key: "today" as const, n: promises.counts.today, label: "Due today",
+                hint: "ring them now", cls: "border-emerald-200 bg-emerald-50",
+                on: "ring-2 ring-emerald-400", value: "text-emerald-700" },
+              { key: "tomorrow" as const, n: promises.counts.tomorrow, label: "Due tomorrow",
+                hint: "line up for the morning", cls: "border-amber-200 bg-amber-50",
+                on: "ring-2 ring-amber-400", value: "text-amber-700" },
+            ]).map((b) => (
+              <button
+                key={b.label}
+                onClick={() => setDueFilter(dueFilter === b.key ? null : b.key)}
+                disabled={b.n === 0}
+                className={`rounded-xl border p-4 text-left transition disabled:opacity-50 ${b.cls} ${
+                  dueFilter === b.key ? b.on : "hover:brightness-95"
+                }`}
+              >
                 <div className={`text-2xl font-semibold ${b.value}`}>{b.n}</div>
                 <div className="mt-0.5 text-xs font-medium text-slate-700">{b.label}</div>
-                <div className="text-[11px] text-slate-400">{b.hint}</div>
-              </div>
+                <div className="text-[11px] text-slate-400">
+                  {dueFilter === b.key ? "showing these — click to clear" : b.hint}
+                </div>
+              </button>
             ))}
           </div>
 
           {callNote && <p className="mt-3 text-xs text-slate-500">{callNote}</p>}
+          {dueFilter && (
+            <p className="mt-3 text-xs text-slate-500">
+              {shownPromises.length} customer{shownPromises.length === 1 ? "" : "s"} in this
+              pile.{" "}
+              <button
+                onClick={() => setDueFilter(null)}
+                className="font-medium text-indigo-600 hover:underline"
+              >
+                Show the nearest few instead
+              </button>
+            </p>
+          )}
 
           <div className="mt-4 divide-y divide-slate-100">
-            {promises.due_soon.slice(0, 6).map((p) => (
+            {shownPromises.map((p) => (
               <div key={p.session_id} className="flex items-center gap-3 py-2.5">
                 <span className="w-24 shrink-0 font-mono text-xs text-slate-700">
                   {maskPhone(p.phone_number)}
