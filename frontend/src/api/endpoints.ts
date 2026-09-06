@@ -74,6 +74,11 @@ export const sendSessionMessage = (id: string, user_text: string) =>
     .post(`/sessions/${id}/message`, { session_id: id, user_text })
     .then((r) => r.data as { response_text: string });
 export const endSession = (id: string) => api.post(`/sessions/${id}/end`).then((r) => r.data);
+/** End a call in progress on the phone, not just on the record. */
+export const hangupSession = (id: string) =>
+  api
+    .post<{ hung_up: boolean; status: string }>(`/sessions/${id}/hangup`)
+    .then((r) => r.data);
 
 export interface CallPayload {
   to_number: string;

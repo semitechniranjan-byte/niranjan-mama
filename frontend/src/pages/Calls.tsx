@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createOutboundCall,
   getDispositions,
+  hangupSession,
   getTemplatePlaceholders,
   listSessions,
   listTemplates,
@@ -122,6 +123,24 @@ export function Calls() {
     { key: "CUSTOMER_NAME", value: "", source: "script" },
   ]);
   const [history, setHistory] = useState<HistoryEntry[]>(loadHistory);
+
+  // Ending a call from here needs the phone to hang up, not just the record to close, so
+  // it goes through the handler running the call - the same path the agent uses when it
+  // reaches its own sign-off.
+  const [hangingUp, setHangingUp] = useState<string | null>(null);
+  const hangUp = useMutation({
+    mutationFn: hangupSession,
+    onSuccess: (res) => {
+      setError(res.hung_up ? null : "That call had already ended.");
+      queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } })?.response?.data
+        ?.detail;
+      setError(detail || (err as Error).message);
+    },
+    onSettled: () => setHangingUp(null),
+  });
 
   // History is stored locally and only knows whether the call was accepted for dialling.
   // The outcome - promise to pay, refused, unreachable - is decided by the post-call
@@ -542,6 +561,19 @@ export function Calls() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-slate-400">{fmtTime(h.at)}</span>
+                    {live && h.sessionId && (
+                      <button
+                        onClick={() => {
+                          setHangingUp(h.sessionId!);
+                          hangUp.mutate(h.sessionId!);
+                        }}
+                        disabled={hangingUp === h.sessionId}
+                        title="End this call now"
+                        className="rounded-md bg-rose-600 px-2.5 py-1 text-[11px] font-medium text-white transition hover:bg-rose-700 disabled:opacity-40"
+                      >
+                        {hangingUp === h.sessionId ? "Ending…" : "Hang up"}
+                      </button>
+                    )}
                     {h.sessionId && (
                       <Link
                         to={`/sessions/${h.sessionId}`}

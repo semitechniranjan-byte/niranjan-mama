@@ -723,6 +723,30 @@ async def end_session(session_id: str) -> dict:
     return await handler.finalize_call(session_id, status="completed", reason="ended_by_api")
 
 
+@app.post("/sessions/{session_id}/hangup", dependencies=[Depends(require_api_key)])
+async def hangup_session(session_id: str) -> dict:
+    """End a call that is in progress, on the phone as well as on the record.
+
+    /end only wrote the session off as finished, which left the caller still connected to
+    an agent that had stopped listening. This asks the handler running the call to hang up
+    the way it does when it reaches its own sign-off, so every provider is covered by the
+    code that already knows how to end a call on each of them.
+    """
+    session = await handler.db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="session not found")
+
+    live = call_registry.get_call(session_id)
+    if live is None:
+        # Nothing is holding the line - the call is already over, or this process is not
+        # the one that placed it. Close the record so the console stops showing it as live.
+        await handler.finalize_call(session_id, status="completed", reason="ended_by_operator")
+        return {"session_id": session_id, "hung_up": False, "status": "already ended"}
+
+    await live._hangup_active_call(reason="ended_by_operator")
+    return {"session_id": session_id, "hung_up": True, "status": "hung up"}
+
+
 @app.post("/webhooks/twilio/inbound")
 async def inbound_webhook(request: Request) -> PlainTextResponse:
     session_id = request.query_params.get("session_id", "")
