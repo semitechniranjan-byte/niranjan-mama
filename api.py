@@ -568,6 +568,10 @@ async def create_outbound_call(payload: OutboundCallRequest) -> dict:
     # A dedicated handler keeps this call's audio/session state off the shared instance,
     # so a test call can run while campaigns are dialling.
     call = CallHandler(db=handler.db)
+    try:
+        call.greeting_delay_seconds = float(app_settings.get("greeting_delay_seconds") or 0)
+    except (TypeError, ValueError):
+        call.greeting_delay_seconds = 0.0
     call.llm.set_provider(app_settings.get("llm_provider"))
     call.llm.set_model(app_settings.get("llm_model"))
     if resolved:

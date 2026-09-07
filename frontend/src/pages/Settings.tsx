@@ -522,6 +522,14 @@ export function Settings() {
                 hint="Silence before the agent nudges the caller."
               />
               <Field
+                label="Hold before greeting"
+                type="number"
+                suffix="sec"
+                value={draft.greeting_delay_seconds ?? 0}
+                onChange={(v) => set("greeting_delay_seconds", Number(v))}
+                hint="Leave at 0 unless callers say the greeting starts mid-sentence. Some carriers join the caller's audio a second or two after the call connects, and anything said before that is lost."
+              />
+              <Field
                 label="Wait before hanging up"
                 type="number"
                 suffix="sec"

@@ -394,6 +394,12 @@ async def _run_one_row(
                 # A fresh handler per call keeps session/audio state isolated; the Mongo
                 # client is shared so concurrency does not multiply connections.
                 handler = CallHandler(db=db)
+                try:
+                    handler.greeting_delay_seconds = float(
+                        conf.get("greeting_delay_seconds") or 0
+                    )
+                except (TypeError, ValueError):
+                    handler.greeting_delay_seconds = 0.0
                 handler.llm.set_provider(llm_provider)
                 handler.llm.set_model(llm_model)
 

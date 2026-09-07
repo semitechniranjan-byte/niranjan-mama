@@ -241,6 +241,9 @@ class CallHandler:
         # Set alongside the system prompt when a call is configured, so the same
         # scoring runs whether the call came from a campaign or the Test Call page.
         self.analysis_prompt: Optional[str] = None
+        # Seconds to hold before the greeting, so a carrier that joins the caller's audio
+        # late does not swallow the front of it. Set from Settings per call.
+        self.greeting_delay_seconds = 0.0
         self._analysis_llm: Optional[GroqLLMService] = None
         self._backup: Optional[GroqLLMService] = None
 
@@ -354,6 +357,18 @@ class CallHandler:
         return self.initialized or self.llm.ready
 
     async def initial_greeting(self, greeting_text: str) -> None:
+        # Hold before speaking, if the deployment asks for it. The greeting is sent about
+        # 170ms after the stream opens, but a carrier may not have joined the caller's
+        # audio to it yet - and whatever is said before that join is simply gone. A caller
+        # who hears "...se baat kar rahi hoon?" without the front of it waits to see if
+        # more is coming, which reads as the agent being slow when it was early. Zero by
+        # default, because on a carrier that bridges immediately this is pure added delay.
+        delay = self.greeting_delay_seconds
+        if delay > 0:
+            logger.warning(
+                "GREETING [%s] holding %.1fs for the audio path", self.session_id, delay
+            )
+            await asyncio.sleep(delay)
         if self.call_ending or self.should_end_call:
             return
         self.greeting_in_progress = True
