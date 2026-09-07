@@ -86,6 +86,9 @@ export function Campaigns() {
   const [language, setLanguage] = useState("auto");
   // Several agents can work one campaign, so a big datasheet uses all capacity.
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
+  // A list uploaded at night should not wait for somebody to be at a screen in the
+  // morning. Empty means start as soon as Launch is pressed.
+  const [startAt, setStartAt] = useState("");
   const effectiveAgents = selectedAgentIds.length
     ? agents.filter((a) => selectedAgentIds.includes(a._id))
     : agents;
@@ -130,6 +133,7 @@ export function Campaigns() {
 
   const resetForm = () => {
     nameEdited.current = false;
+    setStartAt("");
     setName("");
     setDatasheetId("");
     setUseCase("");
@@ -142,13 +146,16 @@ export function Campaigns() {
       const created = await createCampaign({
         name,
         mode,
+        scheduled_at: startAt ? new Date(startAt).toISOString() : undefined,
         datasheet_id: datasheetId,
         prompt_template_id: promptTemplateId,
         use_case: effectiveUseCase,
         language,
         agent_ids: effectiveAgents.map((a) => a._id),
       });
-      await launchCampaign(created.campaign_id);
+      // A booked run is started by the sweep when its time comes; launching it here would
+      // defeat the booking entirely.
+      if (!startAt) await launchCampaign(created.campaign_id);
       return created;
     },
     onSuccess: () => {
@@ -259,6 +266,21 @@ export function Campaigns() {
                 placeholder="July follow-up calls"
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               />
+            </label>
+
+            <label className="block text-xs font-medium text-slate-600">
+              Start at
+              <input
+                type="datetime-local"
+                value={startAt}
+                onChange={(e) => setStartAt(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              />
+              <span className="mt-1 block text-[11px] font-normal text-slate-400">
+                {startAt
+                  ? "Booked. It will start itself, and wait if that time is outside calling hours."
+                  : "Leave empty to start as soon as you press the button."}
+              </span>
             </label>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -436,7 +458,13 @@ export function Campaigns() {
               }
               className="w-full rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
             >
-              {createAndLaunchMutation.isPending ? "Starting…" : "Start calling"}
+              {createAndLaunchMutation.isPending
+                ? startAt
+                  ? "Booking…"
+                  : "Starting…"
+                : startAt
+                  ? "Book this run"
+                  : "Start calling"}
             </button>
           </form>
         </div>

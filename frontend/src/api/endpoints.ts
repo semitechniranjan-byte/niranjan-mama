@@ -477,6 +477,8 @@ export const setMappingKeys = (categories: MappingKeyCategories) =>
 export const createCampaign = (payload: {
   name: string;
   mode: string;
+  /** ISO timestamp to start at. Omitted means start as soon as it is launched. */
+  scheduled_at?: string;
   datasheet_id: string;
   prompt_template_id: string;
   template_variant?: string;
@@ -485,6 +487,12 @@ export const createCampaign = (payload: {
   agent_id?: string;
   agent_ids?: string[];
 }) => api.post<{ campaign_id: string }>("/campaigns", payload).then((r) => r.data);
+/** Set or clear the time a run starts by itself. Null clears it. */
+export const scheduleCampaign = (id: string, scheduled_at: string | null) =>
+  api
+    .post<{ scheduled_at: string | null }>(`/campaigns/${id}/schedule`, { scheduled_at })
+    .then((r) => r.data);
+
 /** Hold the queue. Calls on the line finish; nothing new is dialled. */
 export const pauseCampaign = (id: string) =>
   api.post<{ status: string }>(`/campaigns/${id}/pause`).then((r) => r.data);

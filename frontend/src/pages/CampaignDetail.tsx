@@ -9,6 +9,7 @@ import {
   launchCampaign,
   pauseCampaign,
   resumeCampaign,
+  scheduleCampaign,
   stopCampaign,
   getDispositions,
   getSession,
@@ -21,6 +22,7 @@ const STATUS_DOT: Record<string, string> = {
   draft: "bg-slate-400",
   running: "bg-amber-500",
   paused: "bg-blue-500",
+  scheduled: "bg-violet-500",
   stopping: "bg-orange-500",
   stopped: "bg-slate-500",
   interrupted: "bg-slate-500",
@@ -129,7 +131,8 @@ export function CampaignDetail() {
   const queryClient = useQueryClient();
   const [controlNote, setControlNote] = useState<string | null>(null);
   const control = useMutation({
-    mutationFn: ({ action }: { action: "pause" | "resume" | "stop" | "rerun" }) => {
+    mutationFn: ({ action }: { action: "pause" | "resume" | "stop" | "rerun" | "unschedule" }) => {
+      if (action === "unschedule") return scheduleCampaign(id!, null);
       const fn = { pause: pauseCampaign, resume: resumeCampaign, stop: stopCampaign, rerun: launchCampaign }[action];
       return fn(id!);
     },
@@ -142,6 +145,7 @@ export function CampaignDetail() {
               resume: "Going again from where it stopped.",
               stop: "Stopping. Rows not yet dialled stay queued for a re-run.",
               rerun: "Started again — the rows that were left will be called.",
+              unschedule: "Booking cancelled. It will not start by itself.",
             }[v.action],
       );
       queryClient.invalidateQueries({ queryKey: ["campaign", id] });
@@ -246,6 +250,31 @@ export function CampaignDetail() {
               );
             if (status === "stopping")
               return <span className="text-xs text-slate-500">Stopping…</span>;
+            if (status === "scheduled")
+              return (
+                <>
+                  <span className="text-xs text-slate-500">
+                    Starts{" "}
+                    {campaign?.scheduled_at
+                      ? new Date(campaign.scheduled_at).toLocaleString()
+                      : "when booked"}
+                  </span>
+                  <button
+                    onClick={() => control.mutate({ action: "unschedule" })}
+                    disabled={busy}
+                    className={`${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`}
+                  >
+                    Cancel booking
+                  </button>
+                  <button
+                    onClick={() => control.mutate({ action: "rerun" })}
+                    disabled={busy}
+                    className={`${btn} bg-indigo-600 text-white hover:bg-indigo-700`}
+                  >
+                    Start now
+                  </button>
+                </>
+              );
             return (
               <button onClick={() => control.mutate({ action: "rerun" })} disabled={busy}
                 className={`${btn} border border-slate-300 text-slate-700 hover:bg-slate-50`}>

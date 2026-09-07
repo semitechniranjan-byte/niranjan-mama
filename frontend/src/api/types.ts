@@ -244,6 +244,8 @@ export interface Campaign {
   stats: CampaignStats;
   created_at?: string;
   updated_at?: string;
+  /** When this run starts by itself, if it has been booked. */
+  scheduled_at?: string | null;
   /** Why rows never dialled, when a run finished without placing calls. */
   last_error?: string | null;
   failed_rows?: number;

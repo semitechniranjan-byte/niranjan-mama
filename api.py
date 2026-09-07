@@ -176,6 +176,22 @@ async def _retry_sweeper() -> None:
             settings_doc = await handler.db.get_app_settings()
             if campaign_service._within_calling_hours(settings_doc):
                 now = datetime.utcnow()
+
+                # Runs booked for a time that has arrived. Checked inside the calling-hours
+                # gate, so a run scheduled for 6am waits for the window to open rather than
+                # dialling at 6am.
+                for booked in await handler.db.campaigns.find(
+                    {"status": "scheduled", "scheduled_at": {"$lte": now}}
+                ).to_list(50):
+                    campaign_id = str(booked["_id"])
+                    if campaign_service.is_campaign_running(campaign_id):
+                        continue
+                    logger.warning(
+                        "SCHEDULED campaign %s (%s) starting now",
+                        campaign_id, booked.get("name"),
+                    )
+                    await handler.db.update_campaign(campaign_id, scheduled_at=None)
+                    asyncio.create_task(campaign_service.run_campaign(handler, campaign_id))
                 due = await handler.db.datasheets.find(
                     {"rows.next_attempt_at": {"$lte": now}}, {"_id": 1}
                 ).to_list(200)
@@ -474,6 +490,9 @@ class CampaignRequest(BaseModel):
     agent_id: Optional[str] = None
     # Several agents can work one campaign so a large datasheet uses all capacity.
     agent_ids: Optional[list[str]] = None
+    # When to start, as an ISO timestamp. A list uploaded at night should not have to wait
+    # for somebody to be at a screen at ten the next morning.
+    scheduled_at: Optional[str] = None
 
 
 class TranscribeRequest(BaseModel):
@@ -2305,6 +2324,18 @@ async def create_campaign(payload: CampaignRequest) -> dict:
         agent_id=payload.agent_id,
         agent_ids=payload.agent_ids,
     )
+    # Booking it at creation saves a second call, and the sweep starts it when the time
+    # comes without anybody being at a screen.
+    if payload.scheduled_at and campaign_id:
+        try:
+            when = datetime.fromisoformat(
+                payload.scheduled_at.replace("Z", "+00:00")
+            ).replace(tzinfo=None)
+            await handler.db.update_campaign(
+                campaign_id, scheduled_at=when, status="scheduled"
+            )
+        except ValueError:
+            logger.warning("Ignoring unreadable schedule %r", payload.scheduled_at)
     return {"campaign_id": campaign_id}
 
 
@@ -2317,6 +2348,34 @@ async def launch_campaign(campaign_id: str) -> dict:
         raise HTTPException(status_code=409, detail="that run is already going")
     asyncio.create_task(run_campaign(handler, campaign_id))
     return {"status": "launching", "campaign_id": campaign_id}
+
+
+class ScheduleRequest(BaseModel):
+    """When a run should start. Null clears the schedule and leaves it waiting."""
+    scheduled_at: Optional[str] = None
+
+
+@app.post("/campaigns/{campaign_id}/schedule", dependencies=[Depends(require_api_key)])
+async def schedule_campaign(campaign_id: str, payload: ScheduleRequest) -> dict:
+    """Set or clear the time a run starts by itself."""
+    campaign = await handler.db.get_campaign(campaign_id)
+    if not campaign:
+        raise HTTPException(status_code=404, detail="campaign not found")
+    if campaign_service.is_campaign_running(campaign_id):
+        raise HTTPException(status_code=409, detail="that run is already going")
+
+    if not payload.scheduled_at:
+        await handler.db.update_campaign(campaign_id, scheduled_at=None, status="draft")
+        return {"campaign_id": campaign_id, "scheduled_at": None}
+
+    try:
+        when = datetime.fromisoformat(payload.scheduled_at.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="that is not a time I can read")
+    when = when.replace(tzinfo=None)
+
+    await handler.db.update_campaign(campaign_id, scheduled_at=when, status="scheduled")
+    return {"campaign_id": campaign_id, "scheduled_at": when.isoformat()}
 
 
 @app.post("/campaigns/{campaign_id}/pause", dependencies=[Depends(require_api_key)])
