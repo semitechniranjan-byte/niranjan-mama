@@ -82,6 +82,9 @@ STT_MIN_CONFIDENCE = 0.5
 # Short filler words are only dropped below this. Kept low deliberately - see the note in
 # _is_noise_transcript; a real one-word answer to the opening question lands around 0.55.
 FILLER_MIN_CONFIDENCE = 0.5
+# Confidence at which a transcript is believed even though the meter saw no speech. The
+# invented "Hello." that the energy gate was written for arrived at 0.69.
+STT_TRUST_WITHOUT_ENERGY = 0.9
 STT_MIN_CHARS = 2
 
 # Things Deepgram commonly emits for noise, breathing or music. On their own they carry no
@@ -717,7 +720,14 @@ class CallHandler:
         # 400. Taken as the caller's answer it makes the agent reply to nobody and then talk
         # over them when they do speak. If the microphone never registered speech, this did
         # not come from the caller.
-        if not self._speech_seen_since_reply:
+        #
+        # Except when the recogniser is certain. The speech threshold is derived from the
+        # line's own noise floor and can land high - 1163 on one noisy call - and a quiet
+        # caller who never crosses it would have every word of theirs thrown away, so they
+        # speak, nothing happens, and they speak again. That reads as the agent taking ten
+        # seconds to answer. A hallucination over silence comes back unsure; real speech the
+        # meter was too deaf to notice comes back certain.
+        if not self._speech_seen_since_reply and confidence < STT_TRUST_WITHOUT_ENERGY:
             logger.warning(
                 "NOISE [%s] dropped (no speech energy on the line): %r",
                 self.session_id, (transcript or "")[:60],
