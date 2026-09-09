@@ -1,0 +1,418 @@
+================================================================================
+QSILON VOICE AGENT - PROJECT HANDOVER
+Written 9 September 2026. Hand this to a new chat before asking for anything.
+================================================================================
+
+--------------------------------------------------------------------------------
+1. WHAT THIS IS
+--------------------------------------------------------------------------------
+
+A production Hindi/multilingual AI voice calling agent. It phones people, holds a
+real conversation, scores the outcome, and reports it.
+
+Live at https://www.qsilon.com
+
+The main script is "Roshini", an EMI collections agent for Bajaj Auto Credit.
+Three other scripts exist in the same deployment: real estate, e-commerce
+delivery confirmation, and salon booking.
+
+One client today. When more arrive the plan is a SEPARATE DEPLOYMENT per client
+(own Render service + own Mongo database), NOT multi-tenancy in one instance.
+That decision was made deliberately - see section 9.
+
+
+--------------------------------------------------------------------------------
+2. WHERE THE CODE LIVES AND HOW IT SHIPS
+--------------------------------------------------------------------------------
+
+REPO (the real one):
+    C:\Users\rupes\Documents\GitHub\niranjan mama
+    remote: https://github.com/semitechniranjan-byte/niranjan-mama.git (private)
+    branch: main
+
+    There is ALSO a folder C:\Users\rupes\Documents\RESUME\niranjan mama.
+    That is NOT the project. Always work in the GitHub folder.
+
+HOW IT SHIPS:
+    1. Claude commits to main locally
+    2. THE USER PUSHES  (Claude does not push)
+    3. Render auto-deploys from GitHub on push
+    4. Frontend is built into frontend/dist and served by FastAPI at /
+
+    So: commit -> user pushes -> Render deploys -> live in a couple of minutes.
+
+    Always run `npm run build` in frontend/ before committing frontend changes,
+    and confirm it says "built in ...". A type error there breaks the deploy.
+
+CONFIG ON RENDER:
+    A Secret File is uploaded to /etc/secrets/.env
+    config.py loads it with override=False, so Render DASHBOARD environment
+    variables WIN over the secret file. This has caused confusion - see
+    section 10, open item about LLM_BACKUP_PROVIDER.
+
+    At boot the app logs what it actually loaded:
+        CONFIG: 8/8 set -> MONGO_URI, DEEPGRAM_API_KEY, ...
+        CONFIG: llm primary=... backup=.../... hedge=0.5s
+    Read those two lines first when anything looks misconfigured.
+
+LOCAL FILES (gitignored, never commit):
+    .env          - local
+    .env.render   - the copy uploaded to Render as the Secret File
+
+
+--------------------------------------------------------------------------------
+3. ACCOUNTS AND LOGINS
+--------------------------------------------------------------------------------
+
+Console:        https://www.qsilon.com
+  admin         qsilonadmin@gmail.com     (sees everything)
+  operator      qsilonuser@gmail.com      (no Templates/Agents/Settings)
+
+Hosting         Render, Starter plan, Oregon, 0.5 vCPU, ~Rs 620/month
+GitHub          semitechniranjan-byte
+Database        MongoDB Atlas, database name "voice_clone"
+
+Telephony       Vobiz (also wired: Exotel, Twilio, Plivo)
+STT             Deepgram nova-3, streaming
+LLM             Gemini 3.5 flash-lite (paid, Tier 1, Rs 500 credit loaded)
+LLM backup      Groq openai/gpt-oss-120b (free tier is enough - it only runs on a hedge)
+TTS             Cartesia sonic-3
+
+IMPORTANT: Gemini billing is ON. No spend cap was set (user's decision).
+LLM cost is about Rs 0.11 per call-minute, so this is a small risk.
+
+
+--------------------------------------------------------------------------------
+4. ARCHITECTURE - HOW ONE CALL WORKS
+--------------------------------------------------------------------------------
+
+  BEFORE THE CALL
+    Upload list  ->  Create/launch a run  ->  Dials 5 at a time
+
+  DURING THE CALL
+    Customer <-> Vobiz (PSTN) <-> Qsilon agent (FastAPI on Render)
+
+    Every turn, in this order:
+      Deepgram nova-3      hears the words        ~300 ms
+      Gemini flash-lite    decides the reply      ~600 ms
+      Cartesia sonic-3     speaks it back         ~120 ms
+      -> caller waits about 800 ms
+
+  AFTER THE CALL
+    Score it (Gemini, ~1.6s)  ->  MongoDB  ->  Report CSV (20 columns)
+
+KEY FILES
+    api.py                 all HTTP + WebSocket endpoints, startup tasks
+    call_handler.py        one live call: audio, VAD, STT, LLM, TTS, hangup
+    campaign_service.py    bulk runs, retries, calling hours, scoring rules
+    db_service.py          every Mongo access
+    stt_stream_service.py  the Deepgram streaming socket
+    vobiz_service.py       Vobiz REST + AudioStream
+    template_service.py    resolves prompt/greeting/voice per use case+language
+    frontend/src/          React console
+
+
+--------------------------------------------------------------------------------
+5. MEASURED PERFORMANCE (real logs, not estimates)
+--------------------------------------------------------------------------------
+
+    Greeting first audio     130-176 ms
+    Greeting total           577-630 ms
+    Turn latency             688-845 ms   <- the target, achieved
+    Median call              56 s, ~7 turns
+    Answer rate              72%  (64 spoke, 25 not reached of 89)
+
+  HOW IT GOT THERE (it started at 4810 ms):
+    - Gemini free tier was throttling at 10-15 requests/minute. Paid tier fixed
+      the cause.
+    - A hedge race fixed the effect: the backup model starts 0.5s in, ALONGSIDE
+      the primary, and the first usable answer wins. Do not raise this window -
+      it was tried at 1.5s and turns went to 2107 ms.
+    - The backup's HTTPS connection is opened during the greeting. Before that,
+      the first hedge of every call paid a TLS handshake: 963 ms vs 467 ms.
+
+  COSTS PER CALL-MINUTE (Rs 88/USD)
+    Telephony (Vobiz)     1.00
+    TTS (Cartesia)        1.42
+    STT (Deepgram)        0.65
+    LLM (Gemini)          0.11
+    ------------------------
+    Total variable        3.18   (+ Rs 620/month hosting)
+
+    100 real-estate leads: ~25 minutes, ~Rs 335, ~73 real conversations.
+
+  NOTE ON THE PROMPT: prompt SIZE is not a latency lever. Measured: a 2992-char
+  prompt gave 1053 ms median, a 237-char prompt gave 968 ms. About a second is
+  what the model costs from India - round trip and generation, not prompt length.
+
+
+--------------------------------------------------------------------------------
+6. EVERYTHING BUILT IN THIS SESSION
+--------------------------------------------------------------------------------
+
+CALL QUALITY
+  - LLM hedge race (0.5s) with failover to a second provider
+  - Backup LLM connection warmed during the greeting
+  - Auto-hangup when the agent reaches its own sign-off
+  - Fixed: agent transcribing its own greeting echo and answering nobody
+  - Fixed: agent talking over the caller after a barge-in
+  - Fixed: carrier hold announcements being answered as if they were the customer
+  - Fixed: blank/space-padded customer names reaching the caller as a gap
+  - Fixed: two callers' audio attaching to one handler when session_id was missing
+  - Prompt fix: an amount offer ("das hazaar de sakta hoon") used to END the call.
+    It now asks which day. 3/3 verified live.
+
+DASHBOARD
+  - Six outcome tiles grouped the way a desk works, each opening its list
+  - "Promises to chase": overdue / due today / due tomorrow, each clickable,
+    each row with Call and Open. Rs 1,46,000 promised across 36 calls.
+  - Answer rate now counted from calls, not from campaign counters (was showing
+    15% when the truth was 72%)
+
+REPORTS AND ANALYTICS
+  - Reports page, both roles, 20-column CSV with a UTF-8 BOM (Excel mangles
+    Devanagari without it)
+  - One-line LLM summary of every call, written at scoring time not export time
+  - Download from a period, from a campaign, or from a single call
+  - Analytics: totals, promise rate, calls per day, outcomes, language split
+
+BULK CALLING ("Auto Dialer")
+  - Pause / Stop / Run again, and a stuck run can always be cleared
+  - Scheduled runs: book a start time, a sweep starts it
+  - Auto-retry for unanswered calls (3 attempts, 4h apart, configurable)
+  - Calling hours 09:00-21:00 enforced (calls had gone out at 4am)
+  - A run that dials nobody now says why on its own record
+
+LISTS AND FORMATS
+  - "Build from a file": upload a sheet + pick a script, and the whole list
+    format is proposed - columns, phone column, which {PLACEHOLDERS} the file
+    fills, and which it CANNOT (shown in amber before any call goes out)
+  - "Read from file" on required columns
+  - "Suggest" on column mappings, from what real calls produce
+  - View the first 10 rows of any uploaded list
+  - Mapping keys "Scan calls" - reads what calls actually carry
+
+OUTCOMES
+  - Per-use-case dispositions: an outcome belongs to the scripts that can return it
+  - "Import from scripts": reads each analysis prompt's outcome table.
+    16 codes added, 15 existing ones tagged.
+  - PTP/FPTP day windows moved from code into Settings
+
+DO NOT CALL
+  - Numbers added by hand, imported from a client register, or added by the
+    agent after WN / DEATH / legal threat / self-harm / fraud
+  - A refusal to pay is deliberately NOT suppressed - that is a call to make again
+  - Matched on last 10 digits (+916299515059 = 916299515059 = 6299515059)
+  - Checked on every dial route
+
+CONSOLE
+  - Renamed: Campaigns -> Auto Dialer, Datasheets -> Call Lists
+  - Palette matches the client deck: ink #0E2A38, teal #17968F
+  - 13 native browser dialogs replaced with an in-app one
+  - 11 empty/iconless controls filled in
+  - Test Call: placeholders come from the prompt, clear on script change
+
+
+--------------------------------------------------------------------------------
+7. TUNING CONSTANTS - WHERE THEY ARE
+--------------------------------------------------------------------------------
+
+call_handler.py
+    LLM_HEDGE_AFTER_SECONDS      0.5    do NOT raise, see section 5
+    LLM_TOTAL_DEADLINE_SECONDS   4.0
+    STT_MIN_CONFIDENCE           0.5
+    FILLER_MIN_CONFIDENCE        0.5
+    STT_TRUST_WITHOUT_ENERGY     0.9    believe a transcript the VAD missed
+    VAD_SILENCE_FRAMES_TO_END    15     (~300 ms)
+    BARGEIN_GRACE_SECONDS        0.8
+    INTERRUPTION_RECOVERY_SECONDS 2.5
+    SUPPRESS_ON_CODES            WN, DEATH, LGT, LEGAL, SUC_THREAT, FRAUD
+
+campaign_service.py
+    PTP_MAX_DAYS                 2      default, overridable in Settings
+    FPTP_MAX_DAYS                7      default, overridable in Settings
+    RETRYABLE_CODES              NR, ICR, RNR, LM, NO_ANSWER, ERROR, CALL_NOT_PLACED
+    DEFAULT_MAX_ATTEMPTS         3
+    DEFAULT_RETRY_GAP_HOURS      4
+    DEFAULT_CALL_START_HOUR      9
+    DEFAULT_CALL_END_HOUR        21
+
+stt_stream_service.py
+    ENDPOINTING_MS               300
+    UTTERANCE_END_MS             1000   Deepgram's floor, cannot go lower
+
+config.py
+    MAX_CONCURRENT_CALLS         5      the real ceiling on this instance
+
+SETTINGS PAGE (stored in Mongo app_settings, override the defaults above)
+    calling_start_hour, calling_end_hour, max_attempts, retry_gap_hours,
+    ptp_max_days, fptp_max_days, greeting_delay_seconds, max_call_seconds,
+    silence_first_seconds, silence_second_seconds
+
+
+--------------------------------------------------------------------------------
+8. OPEN ITEMS - THINGS THAT STILL NEED DOING
+--------------------------------------------------------------------------------
+
+A. REAL ESTATE HAS NO HINDI SCRIPT.  <-- blocks the 100 leads
+   real_estate: english has a 12,337-char prompt and works.
+   hindi, tamil, telugu, kannada, marathi are ALL EMPTY (0 chars).
+   If the client's leads need Hindi, that prompt must be written first.
+   Also: the real-estate script wants COMPANY_NAME, PROJECT_NAME,
+   APPROVED_PROPERTY_INFO and AGENT_CALLBACK_NUMBER. A sheet without those
+   columns will make the agent speak gaps mid-sentence.
+
+B. LATENCY - THE USER REPORTS 10 SECONDS, THE LOGS DO NOT SHOW IT.
+   Two clean calls measured 688-845 ms a turn. But in BOTH calls the caller
+   answered at exactly frame 300 (6 seconds), a 5.4s pause after the greeting.
+   Hypothesis: the carrier joins the caller's audio ~2s after connect, so the
+   front of the greeting is lost and the caller waits to hear more.
+   A setting "Hold before greeting" was added, DEFAULT 0 (no change in
+   behaviour). The user was asked to set it to 1, make a call, and report.
+   THIS IS UNRESOLVED AND IS THE USER'S TOP PRIORITY.
+
+C. LLM_BACKUP_PROVIDER MISMATCH.
+   .env.render says gemini, but live logs say "backup ready: groq/...".
+   A Render dashboard env var is probably overriding the secret file
+   (config.py loads it with override=False). Check the boot line
+   "CONFIG: llm primary=... backup=..." to see what actually loaded.
+   Not urgent: Groq is currently the faster backup anyway.
+
+D. DC OUTCOME STILL UNRECOGNISED.
+   The e-commerce delivery prompt has no outcome table, so "Import from
+   scripts" cannot read its codes. DC appears in reports without a label.
+
+E. PTP/FPTP NOT TAGGED TO A USE CASE.
+   The collections prompt states them inside a day-window table where the code
+   is in the SECOND column, and the importer only reads the first. They stay
+   untagged, which means "available to every script". Can be tagged by hand in
+   Settings.
+
+F. GIT - COMPANY COMMITS.
+   The repo contains 5 commits authored by manish12-bit <manish@wordworksai.com>.
+   The user asked about removing them. DO NOT REMOVE 744cfe8 - it created
+   vobiz_service.py, which every call still runs through. Removing it kills the
+   product. Two of the seven "company" commits are actually the user's own
+   (their email, wrong display name). This decision is still open.
+
+G. CLIENT DECK.
+   docs/Qsilon-Voice-Agent.pptx (11 slides) and
+   docs/Qsilon-Voice-Agent-Overview.docx exist but hold TWO STALE FIGURES:
+     - LLM cost says Rs 0.03/min; the real figure is Rs 0.11/min
+     - Total says Rs 3.10/min; the real figure is Rs 3.18/min
+     - A line says the ceiling is the free model tier - no longer true,
+       Gemini is on paid Tier 1
+   The user parked this ("kuch mat karo abhi presentations").
+
+
+--------------------------------------------------------------------------------
+9. ARCHITECTURE DECISION - MULTIPLE CLIENTS
+--------------------------------------------------------------------------------
+
+The system today is SINGLE CLIENT, multiple use cases. What would break with a
+second client:
+
+  - templates[0] is hardcoded in 4 places - only one prompt template is ever read
+  - one global disposition list
+  - one global app_settings: one voice, one from_number, one telephony account
+  - NO client/tenant field on any record (sessions, campaigns, datasheets)
+
+RECOMMENDATION MADE AND ACCEPTED: one deployment per client until roughly 8-10
+clients. Reasons: zero risk of one client's debtor data reaching another (the
+worst possible failure with this data), each client gets their own caller ID and
+limits, and it needs no code change. Rs 620/month per client is trivial against
+Rs 335 per 100 calls.
+
+Multi-tenancy becomes worth building only when hosting and operating several
+deployments costs more than the engineering would.
+
+
+--------------------------------------------------------------------------------
+10. HOW THE USER WORKS - READ THIS
+--------------------------------------------------------------------------------
+
+  - The user writes in Hinglish. Reply in Hinglish. Keep it direct.
+  - They move fast and often send a new instruction mid-task. Finish what is in
+    flight, then take the new one.
+  - THEY PUSH, NOT CLAUDE. Commit and tell them to push.
+  - They send Render logs and screenshots as evidence. READ THEM CAREFULLY -
+    several real bugs in this project were found only in a log, and several
+    wrong guesses were avoided by waiting for one.
+
+  WHAT WORKED, AND SHOULD CONTINUE:
+  - Measure before changing. Every latency claim in this document came from a
+    real log or a benchmark against the live model, not an estimate.
+  - When a guess is a guess, say so. Twice in this session a confident-sounding
+    theory was wrong, and saying "I do not know yet, send the log" was faster.
+  - Verify against the live database where safe. Reading production Mongo to
+    check a fix is fine; writing to it needs care.
+  - Own mistakes plainly. Three real ones happened here:
+      * update_model_data replaced instead of merging and wiped the analysis on
+        82 sessions (restored by re-scoring, transcripts were intact)
+      * adding "hello" to a filler list killed a whole call's transcripts
+      * an undefined name (analysis_prompt) broke ALL bulk calling from 23 Aug
+        to 6 Sep, silently, because a gather swallowed the exception
+  - Small commits with a message that says what was wrong and what the evidence
+    was. The history is the explanation.
+
+  A WARNING FROM EXPERIENCE:
+  Running CallHandler.initialize() against the production database CREATES A
+  JUNK SESSION. Doing this in diagnostics polluted the client's Conversations
+  list with 7 fake calls. It is fixed now (boot passes persist_session=False),
+  but be careful what you run against production.
+
+
+--------------------------------------------------------------------------------
+11. USEFUL COMMANDS
+--------------------------------------------------------------------------------
+
+  Build the frontend (ALWAYS before committing frontend changes):
+      cd frontend && npm run build
+
+  Type-check only:
+      cd frontend && npx tsc -b
+
+  What is not yet pushed:
+      git log --oneline origin/main..HEAD
+
+  Read production data safely (loads .env.render, read-only):
+      python - <<'PY'
+      import re, io, os, asyncio, logging
+      for ln in io.open('.env.render', encoding='utf-8'):
+          m = re.match(r'^([A-Z_]+)=(.*)$', ln.strip())
+          if m: os.environ.setdefault(m.group(1), m.group(2))
+      logging.disable(logging.CRITICAL)
+      import call_handler as ch
+      async def main():
+          h = ch.CallHandler(); await h.db.initialize()
+          print(await h.db.sessions.count_documents({}))
+      asyncio.run(main())
+      PY
+
+  NOTE: do NOT call h.initialize() in a script - it writes a session row.
+  Use h.db.initialize() instead.
+
+
+--------------------------------------------------------------------------------
+12. STATE AT HANDOVER
+--------------------------------------------------------------------------------
+
+  Everything is committed AND pushed. Working tree clean.
+  Latest commit: edd04ed "Let the greeting wait for the caller's audio to be joined"
+
+  Recent commits, newest first:
+    edd04ed  greeting hold setting (default 0) for late carrier audio
+    1aa1975  believe a confident transcript the VAD missed
+    3d37bcf  scheduled runs
+    093842c  "j"  - the user's own commit, contains the whole do-not-call feature
+    3ba94dd  outcomes read from the scripts
+    446858c  auto-retry + calling hours
+    f92607f  list preview + real action icons
+    5ef7b70  build a list format from a file and a script
+
+  THE NEXT THING TO DO: item 8B. Ask the user to set "Hold before greeting" to 1
+  in Settings, make one call, and send the log. Look for the line
+  "GREETING [...] holding 1.0s for the audio path" and whether the caller then
+  answers sooner than frame 300.
+
+================================================================================
